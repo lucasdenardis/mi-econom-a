@@ -51,10 +51,10 @@ def cargar_datos_historicos():
 
 df_ingresos_hist, df_gastos_hist = cargar_datos_historicos()
 
-# Inicializar Estado de Sesión de forma segura
+# Inicializar Estado de Sesión por defecto
 if 'tarjetas' not in st.session_state:
     st.session_state.tarjetas = [
-        {"nombre": "Visa Macro", "limite": 4500000, "tipo": "Crédito"}
+        {"nombre": "Visa Macro", "limite": 4500000.0, "tipo": "Crédito"}
     ]
 
 if 'gastos' not in st.session_state:
@@ -63,28 +63,35 @@ if 'gastos' not in st.session_state:
 if 'ingresos' not in st.session_state:
     st.session_state.ingresos = df_ingresos_hist
 
-# Cargar persistencia local si existe
+# Cargar persistencia local de forma ultra segura (si falla, borra el archivo corrupto)
 if os.path.exists(ARCHIVO_DATOS):
     try:
         with open(ARCHIVO_DATOS, "r") as f:
             data = json.load(f)
-            if "gastos" in data and len(data["gastos"]) > 0:
+            if "gastos" in data and isinstance(data["gastos"], list) and len(data["gastos"]) > 0:
                 st.session_state.gastos = pd.DataFrame(data["gastos"])
-            if "ingresos" in data and len(data["ingresos"]) > 0:
+            if "ingresos" in data and isinstance(data["ingresos"], list) and len(data["ingresos"]) > 0:
                 st.session_state.ingresos = pd.DataFrame(data["ingresos"])
-            if "tarjetas" in data and len(data["tarjetas"]) > 0:
+            if "tarjetas" in data and isinstance(data["tarjetas"], list) and len(data["tarjetas"]) > 0:
                 st.session_state.tarjetas = data["tarjetas"]
     except Exception:
-        pass
+        # Si el JSON está roto, lo eliminamos para evitar bloqueos
+        os.remove(ARCHIVO_DATOS)
 
 def guardar_estado():
-    data = {
-        "gastos": st.session_state.gastos.to_dict(orient="records") if not st.session_state.gastos.empty else [],
-        "ingresos": st.session_state.ingresos.to_dict(orient="records") if not st.session_state.ingresos.empty else [],
-        "tarjetas": st.session_state.tarjetas
-    }
-    with open(ARCHIVO_DATOS, "w") as f:
-        json.dump(data, f)
+    try:
+        gasto_dict = st.session_state.gastos.to_dict(orient="records") if isinstance(st.session_state.gastos, pd.DataFrame) and not st.session_state.gastos.empty else []
+        ingreso_dict = st.session_state.ingresos.to_dict(orient="records") if isinstance(st.session_state.ingresos, pd.DataFrame) and not st.session_state.ingresos.empty else []
+        
+        data = {
+            "gastos": gasto_dict,
+            "ingresos": ingreso_dict,
+            "tarjetas": st.session_state.tarjetas
+        }
+        with open(ARCHIVO_DATOS, "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        st.error(f"Error al guardar los datos: {e}")
 
 def formato_arg(valor):
     return f"${float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
