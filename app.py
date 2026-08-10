@@ -7,19 +7,38 @@ import os
 # --- 1. CONFIGURACIÓN MODERNA DE LA INTERFAZ ---
 st.set_page_config(page_title="Mi Economía | Dashboard", layout="wide", page_icon="💸")
 
+# Inyección de CSS para rediseñar botones del menú y mejorar la vista móvil
+st.markdown("""
+<style>
+/* Hacer los botones del menú lateral gigantes y separados */
+[data-testid="stSidebar"] div[role="radiogroup"] > label {
+    padding: 15px 20px;
+    margin-bottom: 15px;
+    background-color: #1E1E24;
+    border-radius: 10px;
+    border: 1px solid #444;
+}
+[data-testid="stSidebar"] div[role="radiogroup"] > label p {
+    font-size: 18px !important;
+    font-weight: 600 !important;
+}
+/* Cambiar color cuando pasas el dedo/mouse */
+[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
+    background-color: #2E2E38;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # --- 2. MOTOR DE IMPORTACIÓN AUTOMÁTICA ---
-# Carga los datos de tu Excel original una sola vez para no perder la historia
 @st.cache_data
 def cargar_datos_historicos():
     archivo_excel = "Planificador_Financiero_Fusionado FINAL (1).xlsx"
     
     if os.path.exists(archivo_excel):
         try:
-            # Leer pestaña de Gastos (ignorando las filas de encabezado de texto)
             df_gastos = pd.read_excel(archivo_excel, sheet_name='Gastos', header=3)
             df_gastos = df_gastos.dropna(subset=['Fecha', 'Monto ($)'])
             
-            # Leer pestaña de Ingresos
             df_ingresos = pd.read_excel(archivo_excel, sheet_name='Ingresos', header=3)
             df_ingresos = df_ingresos.dropna(subset=['Fecha', 'Monto ($)'])
             
@@ -33,11 +52,14 @@ def cargar_datos_historicos():
 
 df_ingresos_hist, df_gastos_hist = cargar_datos_historicos()
 
-# Inicializar bases de datos en sesión
 if 'gastos' not in st.session_state:
     st.session_state.gastos = df_gastos_hist
 if 'ingresos' not in st.session_state:
     st.session_state.ingresos = df_ingresos_hist
+
+# Función global para formato argentino (Ej: $1.500.000,00)
+def formato_arg(valor):
+    return f"${float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 # --- 3. NAVEGACIÓN LATERAL ---
 with st.sidebar:
@@ -45,37 +67,27 @@ with st.sidebar:
     st.markdown("---")
     pagina = st.radio("Menú Principal", [
         "📊 Dashboard General", 
-        "➕ Cargar Movimiento", 
+        "➕ Cargar Movimiento",
+        "📅 Registro Diario",
         "🔄 Fijos y Automatización", 
         "💳 Estado de Tarjetas"
     ])
     st.markdown("---")
-    st.caption("Los datos se sincronizan localmente.")
 
 # --- 4. PÁGINA: DASHBOARD GENERAL (Gráficos) ---
 if pagina == "📊 Dashboard General":
     st.title("Panel de Control Financiero")
     
-    # 1. Función para formato argentino (Ej: $1.500.000,00)
-    def formato_arg(valor):
-        return f"${valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    
-    # 2. Filtro dinámico de Mes
     meses_disponibles = st.session_state.gastos['Mes'].dropna().unique().tolist() if not st.session_state.gastos.empty else ["Mes Actual"]
-    
-    # Intenta poner "Julio" por defecto si existe, sino el primer mes que encuentre
     indice_por_defecto = meses_disponibles.index("Julio") if "Julio" in meses_disponibles else 0
     mes_seleccionado = st.selectbox("Seleccionar Mes de Análisis", options=meses_disponibles, index=indice_por_defecto)
     
-    # 3. Filtrar los Excel automáticamente según el mes elegido
     df_gastos_mes = st.session_state.gastos[st.session_state.gastos['Mes'] == mes_seleccionado]
     df_ingresos_mes = st.session_state.ingresos[st.session_state.ingresos['Mes'] == mes_seleccionado]
     
-    # 4. Motor de cálculos matemáticos reales
     ingresos_totales = df_ingresos_mes['Monto ($)'].sum() if not df_ingresos_mes.empty else 0
     
     if not df_gastos_mes.empty:
-        # Detectar qué es Tarjeta (devengado) y qué es Liquidez Inmediata (percibido)
         mask_tc = df_gastos_mes['Medio de Pago'].astype(str).str.contains("Tarjeta|Visa|Mastercard", case=False, na=False)
         salidas_efectivas = df_gastos_mes[~mask_tc]['Monto ($)'].sum()
         deuda_tc = df_gastos_mes[mask_tc]['Monto ($)'].sum()
@@ -85,7 +97,6 @@ if pagina == "📊 Dashboard General":
 
     ahorro_real = ingresos_totales - salidas_efectivas - deuda_tc
     
-    # 5. KPIs Rápidos (Ahora con variables reales y formato argentino)
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Ingresos Totales", formato_arg(ingresos_totales), "Liquidez")
     col2.metric("Salidas Efectivas", formato_arg(salidas_efectivas), "Débito/Efectivo", delta_color="inverse")
@@ -94,7 +105,6 @@ if pagina == "📊 Dashboard General":
 
     st.markdown("---")
     
-    # 6. Gráficos Modernos con Plotly (Conectados a los datos reales)
     col_graf1, col_graf2 = st.columns(2)
     
     with col_graf1:
@@ -119,34 +129,53 @@ if pagina == "📊 Dashboard General":
         else:
             st.info(f"No hay datos de gastos para graficar en {mes_seleccionado}.")
 
-    # 7. Tabla Exportable
-    st.subheader(f"Registro Diario ({mes_seleccionado})")
+# --- 5. PÁGINA: REGISTRO DIARIO (Nueva pestaña independiente) ---
+elif pagina == "📅 Registro Diario":
+    st.title("Registro Diario de Movimientos")
+    st.write("Visualizá todos tus movimientos cargados y exportalos a Excel/CSV.")
     
-    # Mostrar la tabla formateando la columna de montos para que se lea mejor
-    df_mostrar = df_gastos_mes.copy()
-    if 'Monto ($)' in df_mostrar.columns:
+    meses_historicos = st.session_state.gastos['Mes'].dropna().unique().tolist() if not st.session_state.gastos.empty else []
+    mes_filtro = st.selectbox("Filtrar por Mes", options=["Ver Todos"] + meses_historicos)
+    
+    df_mostrar = st.session_state.gastos.copy()
+    if mes_filtro != "Ver Todos":
+        df_mostrar = df_mostrar[df_mostrar['Mes'] == mes_filtro]
+    
+    if not df_mostrar.empty and 'Monto ($)' in df_mostrar.columns:
         df_mostrar['Monto ($)'] = df_mostrar['Monto ($)'].apply(lambda x: formato_arg(x) if pd.notnull(x) else x)
-    
+        
     st.dataframe(df_mostrar, use_container_width=True)
     
-    # Exportar a CSV
-    csv = df_gastos_mes.to_csv(index=False).encode('utf-8')
-    st.download_button(label="📥 Exportar Gastos a CSV", data=csv, file_name=f'gastos_{mes_seleccionado}.csv', mime='text/csv')
+    if not df_mostrar.empty:
+        csv = st.session_state.gastos.to_csv(index=False).encode('utf-8')
+        st.download_button(label="📥 Exportar Base Completa a CSV", data=csv, file_name='registro_gastos_completo.csv', mime='text/csv')
 
-# --- 5. PÁGINA: CARGAR MOVIMIENTO ---
+# --- 6. PÁGINA: CARGAR MOVIMIENTO ---
 elif pagina == "➕ Cargar Movimiento":
     st.title("Registrar Nuevo Movimiento")
     
-    tipo_movimiento = st.segmented_control("Tipo de Registro", ["Gasto Variable", "Ingreso"], default="Gasto Variable")
+    # Emojis y colores para distinguir Ingreso de Gasto rápido
+    tipo_movimiento = st.segmented_control("Tipo de Registro", ["🔴 Gasto Variable", "🟢 Ingreso"], default="🔴 Gasto Variable")
+    
+    # Lista completa de categorías extraídas de tu Excel
+    categorias_completas = [
+        "Supermercado", "Salidas / Gastronomía", "Delivery", "Mascota (Chancho)", 
+        "Gimnasio / CrossFit", "Transporte / Auto", "Salud / Farmacia", 
+        "Expensas", "Luz", "Agua", "Gas", "Internet", "Telefonía", 
+        "Prepaga", "Seguro Auto", "Seguros Adicionales", "Monotributo", 
+        "Profesional (Colegiatura)", "Impuestos y Costos TC", 
+        "Compras Online / Impulsivas", "Otros Gastos"
+    ]
     
     with st.container(border=True):
-        if tipo_movimiento == "Gasto Variable":
+        if tipo_movimiento == "🔴 Gasto Variable":
             col1, col2 = st.columns(2)
             with col1:
-                fecha = st.date_input("Fecha")
-                descripcion = st.text_input("Descripción (Ej. Supermercado, Amazon)")
+                # Calendario forzado a DD/MM/YYYY
+                fecha = st.date_input("Fecha", format="DD/MM/YYYY")
+                descripcion = st.text_input("Descripción (Ej. Amazon, Panadería)")
                 monto = st.number_input("Monto", min_value=0.0, format="%.2f")
-                categoria = st.selectbox("Categoría", ["Salidas / Gastronomía", "Supermercado", "Mascota (Chancho)", "Delivery", "Otros Gastos"])
+                categoria = st.selectbox("Categoría", categorias_completas)
                 compartido = st.toggle("Dividir 50% con Tomas")
             
             with col2:
@@ -163,16 +192,17 @@ elif pagina == "➕ Cargar Movimiento":
             
             if st.button("💾 Guardar Gasto", type="primary", use_container_width=True):
                 st.success("Gasto guardado e imputado correctamente.")
-                # Aquí iría la lógica de pd.concat() para sumar el dato a st.session_state.gastos
                 
         else:
             st.subheader("Cargar Ingreso")
             fuente = st.selectbox("Fuente", ["Residencia (Epidemiología)", "Saldan", "Laboratorio SEVEDIC", "Otros ingresos"])
+            # Calendario forzado a DD/MM/YYYY para ingresos también
+            fecha_ingreso = st.date_input("Fecha de Ingreso", format="DD/MM/YYYY")
             monto_ingreso = st.number_input("Monto ($)", min_value=0.0)
             if st.button("💾 Guardar Ingreso", type="primary", use_container_width=True):
                 st.success("Ingreso registrado.")
 
-# --- 6. PÁGINA: FIJOS Y AUTOMATIZACIÓN ---
+# --- 7. PÁGINA: FIJOS Y AUTOMATIZACIÓN ---
 elif pagina == "🔄 Fijos y Automatización":
     st.title("Gastos Fijos del Mes")
     st.write("Estos gastos se precargan el día 1. Confirmá el monto real para que impacten en tu flujo.")
@@ -198,7 +228,7 @@ elif pagina == "🔄 Fijos y Automatización":
                 else:
                     st.button("🟢 Pagado", disabled=True, key=f"btn_{f['nombre']}", use_container_width=True)
 
-# --- 7. PÁGINA: ESTADO DE TARJETAS ---
+# --- 8. PÁGINA: ESTADO DE TARJETAS ---
 elif pagina == "💳 Estado de Tarjetas":
     st.title("Límites y Consumos Futuros")
     st.info("Monitoreo de tu capacidad crediticia actual.")
@@ -207,8 +237,8 @@ elif pagina == "💳 Estado de Tarjetas":
     col_lim1, col_lim2 = st.columns(2)
     with col_lim1:
         st.write("Límite en Cuotas: $4.500.000")
-        st.progress(0.45) # Simulación de porcentaje usado
+        st.progress(0.45) 
         st.caption("$2.025.000 consumido / $2.475.000 disponible")
     with col_lim2:
         st.write("Proyección Próximo Resumen (Vto. Agosto)")
-        st.metric("Total a Pagar Proyectado", "$941,432")
+        st.metric("Total a Pagar Proyectado", formato_arg(941432))
