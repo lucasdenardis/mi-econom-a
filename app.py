@@ -75,11 +75,9 @@ if pagina == "📊 Dashboard General":
     st.title("Panel de Control Financiero")
     
     if not df_movimientos.empty:
-        # Preparación de datos
         df_movimientos['monto'] = pd.to_numeric(df_movimientos['monto'], errors='coerce').fillna(0)
         meses_disponibles = df_movimientos['mes_imputacion'].dropna().unique().tolist()
         
-        # Filtro de Mes
         mes_seleccionado = st.selectbox("Seleccionar Mes de Análisis", options=meses_disponibles, index=len(meses_disponibles)-1)
         st.markdown("---")
         
@@ -91,7 +89,6 @@ if pagina == "📊 Dashboard General":
         gastos_totales_mes = fijos_mes + variables_mes
         ahorro_real = ingresos_mes - gastos_totales_mes
         
-        # KPIs Superiores
         col1, col2, col3 = st.columns(3)
         col1.metric("Ingresos Totales", formato_arg(ingresos_mes))
         col2.metric("Gastos Totales", formato_arg(gastos_totales_mes), delta=formato_arg(-gastos_totales_mes), delta_color="inverse")
@@ -100,7 +97,6 @@ if pagina == "📊 Dashboard General":
         st.markdown("---")
         st.markdown("### 🎯 Análisis y Regla de Presupuesto")
         
-        # CONFIGURACIÓN DINÁMICA DE PORCENTAJES
         with st.expander("⚙️ Ajustar regla de porcentajes (Ej: 50/30/20)", expanded=True):
             col_p1, col_p2, col_p3 = st.columns(3)
             with col_p1:
@@ -113,12 +109,10 @@ if pagina == "📊 Dashboard General":
             if (obj_fijos + obj_var + obj_aho) != 100:
                 st.warning("⚠️ Los porcentajes deben sumar exactamente 100%.")
 
-        # CÁLCULOS DE LA TABLA
         ideal_fijos = ingresos_mes * (obj_fijos / 100)
         ideal_var = ingresos_mes * (obj_var / 100)
         ideal_aho = ingresos_mes * (obj_aho / 100)
 
-        # Lógica de semáforos
         estado_fijos = "✅ Bien" if fijos_mes <= ideal_fijos else "⚠️ Excedido"
         estado_var = "✅ Bien" if variables_mes <= ideal_var else "⚠️ Excedido"
         estado_aho = "✅ Bien" if ahorro_real >= ideal_aho else "🔻 Por debajo"
@@ -135,14 +129,11 @@ if pagina == "📊 Dashboard General":
             ],
             "Estado": [estado_fijos, estado_var, estado_aho]
         }
-        
         st.dataframe(pd.DataFrame(data_presupuesto), use_container_width=True, hide_index=True)
 
         st.markdown("---")
         
-        # TABLA 2: Comparativa Mes a Mes
         st.markdown("### 🗓️ Comparativa Histórica Mes a Mes")
-        
         historico = []
         for m in meses_disponibles:
             df_m = df_movimientos[df_movimientos['mes_imputacion'] == m]
@@ -167,7 +158,6 @@ if pagina == "📊 Dashboard General":
 
         st.markdown("---")
         
-        # ESTADO DE TARJETAS EN EL DASHBOARD
         st.markdown("### 💳 Estado de Tarjetas (Consumos del Mes)")
         nombres_tarjetas = [t['nombre'] for t in tarjetas_activas]
         if nombres_tarjetas:
@@ -203,7 +193,6 @@ elif pagina == "➕ Cargar Movimiento":
             with col1:
                 fecha = st.date_input("Fecha", format="DD/MM/YYYY")
                 descripcion = st.text_input("Descripción (Ej. Supermercado, Amazon)")
-                # SE AGREGA value=None PARA QUE ARRANQUE VACÍO
                 monto = st.number_input("Monto ($)", min_value=0.0, format="%.2f", value=None, placeholder="Ej. 15000")
                 categoria = st.selectbox("Categoría", [
                     "Supermercado", "Salidas / Gastronomía", "Delivery", "Mascota", 
@@ -215,7 +204,6 @@ elif pagina == "➕ Cargar Movimiento":
                 comparte = st.toggle("Dividir 50% con Tomas")
             
             with col2:
-                # LÓGICA CONDICIONAL DE MEDIOS DE PAGO
                 metodo_general = st.selectbox("Método de Pago", ["Efectivo / Débito / MP", "Tarjeta de Crédito"])
                 
                 if metodo_general == "Tarjeta de Crédito":
@@ -229,19 +217,16 @@ elif pagina == "➕ Cargar Movimiento":
                     cuotas = st.number_input("Cuotas", min_value=1, max_value=24, value=1)
                     mes_imputacion = st.selectbox("Mes de Imputación", ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"], index=7)
                 else:
-                    # Oculta cuotas e imputación si es efectivo/débito
                     medio_pago_final = "Débito / Efectivo / MP"
                     cuotas = 1
                     meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-                    mes_imputacion = meses[fecha.month - 1] # Asigna el mes automáticamente según la fecha
+                    mes_imputacion = meses[fecha.month - 1]
                 
             if st.button("💾 Guardar Gasto", type="primary", use_container_width=True):
-                # VALIDACIÓN DE MONTO VACÍO
                 if monto is None or monto <= 0:
                     st.error("⚠️ Por favor, ingresá un monto válido antes de guardar.")
                 else:
                     monto_final = monto / 2 if comparte else monto
-                    
                     nuevo_dato = {
                         "fecha": fecha.strftime("%Y-%m-%d"),
                         "tipo": "Variable",
@@ -261,14 +246,12 @@ elif pagina == "➕ Cargar Movimiento":
             st.subheader("Cargar Ingreso")
             fecha_ing = st.date_input("Fecha", format="DD/MM/YYYY")
             fuente = st.selectbox("Fuente", ["Residencia (Epidemiología)", "Laboratorio", "Otros ingresos"])
-            # SE AGREGA value=None PARA QUE ARRANQUE VACÍO
             monto_ingreso = st.number_input("Monto ($)", min_value=0.0, format="%.2f", value=None, placeholder="Ej. 500000")
             
             meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
             mes_imp_ing = st.selectbox("Mes Imputación", meses, index=fecha_ing.month - 1)
             
             if st.button("💾 Guardar Ingreso", type="primary", use_container_width=True):
-                # VALIDACIÓN DE MONTO VACÍO
                 if monto_ingreso is None or monto_ingreso <= 0:
                     st.error("⚠️ Por favor, ingresá un monto válido antes de guardar.")
                 else:
@@ -288,10 +271,75 @@ elif pagina == "➕ Cargar Movimiento":
                     st.rerun()
 
 elif pagina == "📅 Registro Diario":
-    st.title("Registro Histórico")
+    st.title("Registro Histórico y Edición")
+    st.write("Visualizá, filtrá por mes, y **editá** cualquier celda si te equivocaste (luego presioná Guardar).")
+    
     if not df_movimientos.empty:
-        df_mostrar = df_movimientos[['fecha', 'mes_imputacion', 'tipo', 'categoria', 'descripcion', 'monto', 'medio_pago', 'cuotas']].sort_values(by='fecha', ascending=False)
-        st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+        # 1. Filtro de Mes
+        meses_historicos = df_movimientos['mes_imputacion'].dropna().unique().tolist()
+        opciones_filtro = ["Ver Todos"] + meses_historicos
+        
+        meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+        mes_actual = meses[datetime.date.today().month - 1]
+        
+        indice_defecto = opciones_filtro.index(mes_actual) if mes_actual in opciones_filtro else (len(opciones_filtro) - 1 if len(opciones_filtro) > 1 else 0)
+        mes_filtro = st.selectbox("Filtrar por Mes", options=opciones_filtro, index=indice_defecto)
+        
+        st.markdown("---")
+        
+        # 2. Filtrar Datos
+        df_mostrar = df_movimientos[['id', 'fecha', 'mes_imputacion', 'tipo', 'categoria', 'descripcion', 'monto', 'medio_pago', 'cuotas']].copy()
+        if mes_filtro != "Ver Todos":
+            df_mostrar = df_mostrar[df_mostrar['mes_imputacion'] == mes_filtro]
+            
+        df_mostrar = df_mostrar.sort_values(by='fecha', ascending=False).reset_index(drop=True)
+        
+        # 3. Editor de Datos (Excel-like)
+        edited_df = st.data_editor(
+            df_mostrar,
+            use_container_width=True,
+            hide_index=True,
+            disabled=["id"], # Bloqueamos el ID para que no se rompa la base de datos
+            column_config={
+                "id": None,  # Oculta la columna ID de la vista
+                "fecha": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY"),
+                "mes_imputacion": st.column_config.SelectboxColumn("Mes", options=meses),
+                "tipo": st.column_config.SelectboxColumn("Tipo", options=["Variable", "Fijo", "Ingreso"]),
+                "categoria": st.column_config.TextColumn("Categoría"),
+                "descripcion": st.column_config.TextColumn("Descripción"),
+                "monto": st.column_config.NumberColumn("Monto ($)", format="%.2f"),
+                "medio_pago": st.column_config.TextColumn("Medio de Pago"),
+                "cuotas": st.column_config.NumberColumn("Cuotas", min_value=1, max_value=24)
+            }
+        )
+        
+        # 4. Botón para actualizar Supabase
+        if st.button("💾 Guardar Cambios Editados", type="primary"):
+            cambios = 0
+            for index in edited_df.index:
+                fila_edit = edited_df.loc[index]
+                fila_orig = df_mostrar.loc[index]
+                
+                # Comparamos si el usuario modificó esta fila en particular
+                if not fila_edit.equals(fila_orig):
+                    datos_update = {
+                        "fecha": str(fila_edit['fecha']),
+                        "mes_imputacion": fila_edit['mes_imputacion'],
+                        "tipo": fila_edit['tipo'],
+                        "categoria": fila_edit['categoria'],
+                        "descripcion": fila_edit['descripcion'],
+                        "monto": float(fila_edit['monto']),
+                        "medio_pago": fila_edit['medio_pago'],
+                        "cuotas": int(fila_edit['cuotas'])
+                    }
+                    supabase.table("movimientos").update(datos_update).eq("id", int(fila_edit['id'])).execute()
+                    cambios += 1
+            
+            if cambios > 0:
+                st.success(f"¡Se actualizaron {cambios} registros correctamente!")
+                st.rerun()
+            else:
+                st.info("No se detectaron modificaciones.")
     else:
         st.info("No hay datos para mostrar.")
 
@@ -299,7 +347,6 @@ elif pagina == "🔄 Fijos y Automatización":
     st.title("Confirmación de Gastos Fijos")
     st.write("Confirmá el monto real de tus obligaciones para que impacten en el balance.")
     
-    # En esta pantalla dejamos el value con el monto estimado para que sea más rápido confirmar
     fijos_estimados = [
         {"nombre": "Expensas", "cat": "Expensas", "estimado": 120000},
         {"nombre": "EPEC (Luz)", "cat": "Luz", "estimado": 31622},
@@ -348,7 +395,6 @@ elif pagina == "⚙️ Configurar Tarjetas":
         with col1:
             nuevo_nombre = st.text_input("Nombre (Ej. Visa Galicia)")
         with col2:
-            # SE AGREGA value=None PARA QUE ARRANQUE VACÍO
             nuevo_limite = st.number_input("Límite de Compra ($)", min_value=0.0, step=100000.0, value=None, placeholder="Ej. 1000000")
             
         btn_agregar = st.form_submit_button("Guardar Tarjeta", type="primary")
