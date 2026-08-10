@@ -56,52 +56,82 @@ with st.sidebar:
 if pagina == "📊 Dashboard General":
     st.title("Panel de Control Financiero")
     
-    # Filtro de Mes
-    meses_disponibles = st.session_state.gastos['Mes'].dropna().unique().tolist() if not st.session_state.gastos.empty else ["Mes Actual"]
-    mes_seleccionado = st.selectbox("Seleccionar Mes de Análisis", options=meses_disponibles)
+    # 1. Función para formato argentino (Ej: $1.500.000,00)
+    def formato_arg(valor):
+        return f"${valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     
-    # KPIs Rápidos
+    # 2. Filtro dinámico de Mes
+    meses_disponibles = st.session_state.gastos['Mes'].dropna().unique().tolist() if not st.session_state.gastos.empty else ["Mes Actual"]
+    
+    # Intenta poner "Julio" por defecto si existe, sino el primer mes que encuentre
+    indice_por_defecto = meses_disponibles.index("Julio") if "Julio" in meses_disponibles else 0
+    mes_seleccionado = st.selectbox("Seleccionar Mes de Análisis", options=meses_disponibles, index=indice_por_defecto)
+    
+    # 3. Filtrar los Excel automáticamente según el mes elegido
+    df_gastos_mes = st.session_state.gastos[st.session_state.gastos['Mes'] == mes_seleccionado]
+    df_ingresos_mes = st.session_state.ingresos[st.session_state.ingresos['Mes'] == mes_seleccionado]
+    
+    # 4. Motor de cálculos matemáticos reales
+    ingresos_totales = df_ingresos_mes['Monto ($)'].sum() if not df_ingresos_mes.empty else 0
+    
+    if not df_gastos_mes.empty:
+        # Detectar qué es Tarjeta (devengado) y qué es Liquidez Inmediata (percibido)
+        mask_tc = df_gastos_mes['Medio de Pago'].astype(str).str.contains("Tarjeta|Visa|Mastercard", case=False, na=False)
+        salidas_efectivas = df_gastos_mes[~mask_tc]['Monto ($)'].sum()
+        deuda_tc = df_gastos_mes[mask_tc]['Monto ($)'].sum()
+    else:
+        salidas_efectivas = 0
+        deuda_tc = 0
+
+    ahorro_real = ingresos_totales - salidas_efectivas - deuda_tc
+    
+    # 5. KPIs Rápidos (Ahora con variables reales y formato argentino)
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Ingresos Totales", "$1,905,000", "Liquidez")
-    col2.metric("Salidas Efectivas", "$420,000", "Débito/Efectivo", delta_color="inverse")
-    col3.metric("Deuda TC Mes Próximo", "$941,432", "Visa Macro", delta_color="inverse")
-    col4.metric("Saldo con Tomas", "$14,500", "A favor")
+    col1.metric("Ingresos Totales", formato_arg(ingresos_totales), "Liquidez")
+    col2.metric("Salidas Efectivas", formato_arg(salidas_efectivas), "Débito/Efectivo", delta_color="inverse")
+    col3.metric("Deuda TC Mes", formato_arg(deuda_tc), "Tarjetas", delta_color="inverse")
+    col4.metric("Ahorro Real", formato_arg(ahorro_real), "Disponible libre")
 
     st.markdown("---")
     
-    # Gráficos Modernos con Plotly
+    # 6. Gráficos Modernos con Plotly (Conectados a los datos reales)
     col_graf1, col_graf2 = st.columns(2)
     
     with col_graf1:
-        st.subheader("Flujo de Caja (Devengado vs Percibido)")
-        # Gráfico de cascada simulado
+        st.subheader(f"Flujo de Caja ({mes_seleccionado})")
         fig_waterfall = go.Figure(go.Waterfall(
             name = "Flujo", orientation = "v",
             measure = ["relative", "relative", "relative", "total"],
             x = ["Ingresos", "Gastos Corrientes", "Tarjetas (Cuotas Mes)", "Ahorro Real"],
             textposition = "outside",
-            y = [1905000, -420000, -941432, 543568],
+            y = [ingresos_totales, -salidas_efectivas, -deuda_tc, ahorro_real],
             connector = {"line":{"color":"rgb(63, 63, 63)"}},
         ))
         fig_waterfall.update_layout(template="plotly_dark", margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig_waterfall, use_container_width=True)
 
     with col_graf2:
-        st.subheader("Distribución de Gastos")
-        if not st.session_state.gastos.empty:
-            df_plot = st.session_state.gastos.groupby('Categoría')['Monto ($)'].sum().reset_index()
+        st.subheader(f"Distribución de Gastos ({mes_seleccionado})")
+        if not df_gastos_mes.empty:
+            df_plot = df_gastos_mes.groupby('Categoría')['Monto ($)'].sum().reset_index()
             fig_pie = px.pie(df_plot, values='Monto ($)', names='Categoría', hole=0.4, template="plotly_dark")
             st.plotly_chart(fig_pie, use_container_width=True)
         else:
-            st.info("No hay datos de gastos para graficar.")
+            st.info(f"No hay datos de gastos para graficar en {mes_seleccionado}.")
 
-    # Tabla Exportable
-    st.subheader("Registro Diario (Exportable)")
-    st.dataframe(st.session_state.gastos, use_container_width=True)
+    # 7. Tabla Exportable
+    st.subheader(f"Registro Diario ({mes_seleccionado})")
     
-    # Exportar a CSV (o Excel)
-    csv = st.session_state.gastos.to_csv(index=False).encode('utf-8')
-    st.download_button(label="📥 Exportar Gastos a CSV", data=csv, file_name='gastos_actualizados.csv', mime='text/csv')
+    # Mostrar la tabla formateando la columna de montos para que se lea mejor
+    df_mostrar = df_gastos_mes.copy()
+    if 'Monto ($)' in df_mostrar.columns:
+        df_mostrar['Monto ($)'] = df_mostrar['Monto ($)'].apply(lambda x: formato_arg(x) if pd.notnull(x) else x)
+    
+    st.dataframe(df_mostrar, use_container_width=True)
+    
+    # Exportar a CSV
+    csv = df_gastos_mes.to_csv(index=False).encode('utf-8')
+    st.download_button(label="📥 Exportar Gastos a CSV", data=csv, file_name=f'gastos_{mes_seleccionado}.csv', mime='text/csv')
 
 # --- 5. PÁGINA: CARGAR MOVIMIENTO ---
 elif pagina == "➕ Cargar Movimiento":
