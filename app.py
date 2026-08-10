@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 from supabase import create_client, Client
 import datetime
 
@@ -98,35 +97,46 @@ if pagina == "📊 Dashboard General":
         col2.metric("Gastos Totales", formato_arg(gastos_totales_mes), delta=formato_arg(-gastos_totales_mes), delta_color="inverse")
         col3.metric("Ahorro Real", formato_arg(ahorro_real), delta=f"{(ahorro_real/ingresos_mes*100) if ingresos_mes > 0 else 0:.1f}% del ingreso")
         
-        st.markdown("### 📈 Análisis de Presupuesto Mensual")
-        col_pres, col_graf = st.columns([1, 1])
+        st.markdown("---")
+        st.markdown("### 🎯 Análisis y Regla de Presupuesto")
         
-        with col_pres:
-            # TABLA 1: Presupuesto del mes seleccionado
-            st.write(f"**Desglose de {mes_seleccionado}**")
-            data_presupuesto = {
-                "Concepto": ["Ingresos", "Gastos Fijos", "Gastos Variables", "Ahorro Real"],
-                "Monto": [ingresos_mes, fijos_mes, variables_mes, ahorro_real],
-                "% del Ingreso": [
-                    "100%", 
-                    f"{(fijos_mes/ingresos_mes*100) if ingresos_mes > 0 else 0:.1f}%",
-                    f"{(variables_mes/ingresos_mes*100) if ingresos_mes > 0 else 0:.1f}%",
-                    f"{(ahorro_real/ingresos_mes*100) if ingresos_mes > 0 else 0:.1f}%"
-                ]
-            }
-            df_pres = pd.DataFrame(data_presupuesto)
-            df_pres['Monto'] = df_pres['Monto'].apply(formato_arg)
-            st.dataframe(df_pres, use_container_width=True, hide_index=True)
+        # CONFIGURACIÓN DINÁMICA DE PORCENTAJES
+        with st.expander("⚙️ Ajustar regla de porcentajes (Ej: 50/30/20)", expanded=True):
+            col_p1, col_p2, col_p3 = st.columns(3)
+            with col_p1:
+                obj_fijos = st.number_input("% Gastos Fijos (Necesidades)", min_value=0, max_value=100, value=50)
+            with col_p2:
+                obj_var = st.number_input("% Gastos Variables (Deseos)", min_value=0, max_value=100, value=30)
+            with col_p3:
+                obj_aho = st.number_input("% Ahorro (Futuro)", min_value=0, max_value=100, value=20)
+                
+            if (obj_fijos + obj_var + obj_aho) != 100:
+                st.warning("⚠️ Los porcentajes deben sumar exactamente 100%.")
 
-        with col_graf:
-            # Gráfico de Torta simplificado
-            df_gastos_plot = df_mes[df_mes['tipo'] != 'Ingreso']
-            if not df_gastos_plot.empty:
-                df_plot = df_gastos_plot.groupby('categoria')['monto'].sum().reset_index()
-                fig_pie = px.pie(df_plot, values='monto', names='categoria', hole=0.4, template="plotly_dark")
-                st.plotly_chart(fig_pie, use_container_width=True)
-            else:
-                st.info("No hay gastos registrados en este mes para graficar.")
+        # CÁLCULOS DE LA TABLA
+        ideal_fijos = ingresos_mes * (obj_fijos / 100)
+        ideal_var = ingresos_mes * (obj_var / 100)
+        ideal_aho = ingresos_mes * (obj_aho / 100)
+
+        # Lógica de semáforos
+        estado_fijos = "✅ Bien" if fijos_mes <= ideal_fijos else "⚠️ Excedido"
+        estado_var = "✅ Bien" if variables_mes <= ideal_var else "⚠️ Excedido"
+        estado_aho = "✅ Bien" if ahorro_real >= ideal_aho else "🔻 Por debajo"
+
+        data_presupuesto = {
+            "Categoría": ["Gastos Fijos", "Gastos Variables", "Ahorro"],
+            "Objetivo %": [f"{obj_fijos}%", f"{obj_var}%", f"{obj_aho}%"],
+            "Presupuesto Ideal ($)": [formato_arg(ideal_fijos), formato_arg(ideal_var), formato_arg(ideal_aho)],
+            "Gasto Real ($)": [formato_arg(fijos_mes), formato_arg(variables_mes), formato_arg(ahorro_real)],
+            "Gasto Real %": [
+                f"{(fijos_mes/ingresos_mes*100) if ingresos_mes > 0 else 0:.1f}%",
+                f"{(variables_mes/ingresos_mes*100) if ingresos_mes > 0 else 0:.1f}%",
+                f"{(ahorro_real/ingresos_mes*100) if ingresos_mes > 0 else 0:.1f}%"
+            ],
+            "Estado": [estado_fijos, estado_var, estado_aho]
+        }
+        
+        st.dataframe(pd.DataFrame(data_presupuesto), use_container_width=True, hide_index=True)
 
         st.markdown("---")
         
@@ -279,7 +289,6 @@ elif pagina == "🔄 Fijos y Automatización":
     st.title("Confirmación de Gastos Fijos")
     st.write("Confirmá el monto real de tus obligaciones para que impacten en el balance.")
     
-    # Lista predeterminada con montos estimados precargados
     fijos_estimados = [
         {"nombre": "Expensas", "cat": "Expensas", "estimado": 120000},
         {"nombre": "EPEC (Luz)", "cat": "Luz", "estimado": 31622},
@@ -301,7 +310,6 @@ elif pagina == "🔄 Fijos y Automatización":
             with c1:
                 st.markdown(f"**{f['nombre']}**")
             with c2:
-                # El input permite modificar el monto base antes de guardar
                 monto_real = st.number_input(f"Monto Final", value=float(f['estimado']), key=f['nombre'])
             with c3:
                 st.write("") 
@@ -323,7 +331,6 @@ elif pagina == "🔄 Fijos y Automatización":
 elif pagina == "⚙️ Configurar Tarjetas":
     st.title("Gestión de Tarjetas")
     
-    # EL FORMULARIO ARRIBA FIJO (Requerimiento 5)
     st.subheader("➕ Agregar Nueva Tarjeta")
     with st.form("form_nueva_tarjeta", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -340,7 +347,6 @@ elif pagina == "⚙️ Configurar Tarjetas":
             
     st.markdown("---")
     
-    # LA LISTA DE TARJETAS ABAJO
     st.subheader("💳 Tarjetas Activas")
     if tarjetas_activas:
         for t in tarjetas_activas:
