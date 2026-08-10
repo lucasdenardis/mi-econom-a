@@ -275,8 +275,18 @@ elif pagina == "📅 Registro Diario":
     st.write("Visualizá, filtrá por mes, y **editá** cualquier celda si te equivocaste (luego presioná Guardar).")
     
     if not df_movimientos.empty:
-        # 1. Filtro de Mes
-        meses_historicos = df_movimientos['mes_imputacion'].dropna().unique().tolist()
+        # 1. Convertir los datos de Supabase a formatos que Streamlit entienda
+        df_mostrar = df_movimientos[['id', 'fecha', 'mes_imputacion', 'tipo', 'categoria', 'descripcion', 'monto', 'medio_pago', 'cuotas']].copy()
+        
+        # --- FIX DE TIPOS DE DATOS ---
+        # Convertimos la fecha de texto a formato Fecha real
+        df_mostrar['fecha'] = pd.to_datetime(df_mostrar['fecha']).dt.date
+        # Aseguramos que monto y cuotas sean números reales
+        df_mostrar['monto'] = pd.to_numeric(df_mostrar['monto'], errors='coerce').fillna(0.0)
+        df_mostrar['cuotas'] = pd.to_numeric(df_mostrar['cuotas'], errors='coerce').fillna(1).astype(int)
+        
+        # 2. Filtro de Mes
+        meses_historicos = df_mostrar['mes_imputacion'].dropna().unique().tolist()
         opciones_filtro = ["Ver Todos"] + meses_historicos
         
         meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
@@ -287,14 +297,13 @@ elif pagina == "📅 Registro Diario":
         
         st.markdown("---")
         
-        # 2. Filtrar Datos
-        df_mostrar = df_movimientos[['id', 'fecha', 'mes_imputacion', 'tipo', 'categoria', 'descripcion', 'monto', 'medio_pago', 'cuotas']].copy()
+        # 3. Aplicar Filtro
         if mes_filtro != "Ver Todos":
             df_mostrar = df_mostrar[df_mostrar['mes_imputacion'] == mes_filtro]
             
         df_mostrar = df_mostrar.sort_values(by='fecha', ascending=False).reset_index(drop=True)
         
-        # 3. Editor de Datos (Excel-like)
+        # 4. Editor de Datos (Excel-like)
         edited_df = st.data_editor(
             df_mostrar,
             use_container_width=True,
@@ -313,7 +322,7 @@ elif pagina == "📅 Registro Diario":
             }
         )
         
-        # 4. Botón para actualizar Supabase
+        # 5. Botón para actualizar Supabase
         if st.button("💾 Guardar Cambios Editados", type="primary"):
             cambios = 0
             for index in edited_df.index:
