@@ -4,11 +4,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 import os
 import json
+import datetime
 
 # --- 1. CONFIGURACIÓN MODERNA DE LA INTERFAZ ---
 st.set_page_config(page_title="Mi Economía | Dashboard", layout="wide", page_icon="💸")
 
-# CSS para botones grandes y táctiles en mobile y orden visual
+# CSS para botones grandes y táctiles en mobile
 st.markdown("""
 <style>
 [data-testid="stSidebar"] div[role="radiogroup"] > label {
@@ -28,7 +29,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. GESTIÓN DE DATOS UNIFICADA (Excel + JSON de respaldo) ---
+# --- 2. GESTIÓN DE DATOS Y PERSISTENCIA ROBUSTA ---
 ARCHIVO_DATOS = "datos_usuario.json"
 
 @st.cache_data
@@ -63,14 +64,13 @@ if 'gastos' not in st.session_state:
 if 'ingresos' not in st.session_state:
     st.session_state.ingresos = df_ingresos_base
 
-# Sincronización automática con el JSON compartido en la nube
+# Recuperar datos guardados localmente
 if os.path.exists(ARCHIVO_DATOS):
     try:
         with open(ARCHIVO_DATOS, "r") as f:
             data = json.load(f)
             if "gastos" in data and isinstance(data["gastos"], list) and len(data["gastos"]) > 0:
                 df_json_gastos = pd.DataFrame(data["gastos"])
-                # Combinamos historial base con los nuevos guardados para no perder nada en ningún dispositivo
                 st.session_state.gastos = pd.concat([df_gastos_base, df_json_gastos]).drop_duplicates(subset=['Fecha', 'Monto ($)', 'Descripción'], keep='last')
             if "ingresos" in data and isinstance(data["ingresos"], list) and len(data["ingresos"]) > 0:
                 df_json_ingresos = pd.DataFrame(data["ingresos"])
@@ -98,7 +98,7 @@ def guardar_estado():
 def formato_arg(valor):
     return f"${float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# --- 3. NAVEGACIÓN LATERAL (Abre directo en Cargar Movimiento: index=1) ---
+# --- 3. NAVEGACIÓN LATERAL (Inicia en Cargar Movimiento: index=1) ---
 with st.sidebar:
     st.title("💸 Mi Economía")
     st.markdown("---")
@@ -117,7 +117,7 @@ if pagina == "📊 Dashboard General":
     st.title("Panel de Control Financiero")
     
     meses_disponibles = st.session_state.gastos['Mes'].dropna().unique().tolist() if not st.session_state.gastos.empty else ["Mes Actual"]
-    indice_por_defecto = meses_disponibles.index("Julio") if "Julio" in meses_disponibles else 0
+    indice_por_defecto = meses_disponibles.index("Agosto") if "Agosto" in meses_disponibles else (meses_disponibles.index("Julio") if "Julio" in meses_disponibles else 0)
     mes_seleccionado = st.selectbox("Seleccionar Mes de Análisis", options=meses_disponibles, index=indice_por_defecto)
     
     df_gastos_mes = st.session_state.gastos[st.session_state.gastos['Mes'] == mes_seleccionado] if not st.session_state.gastos.empty else pd.DataFrame()
@@ -167,13 +167,18 @@ if pagina == "📊 Dashboard General":
         else:
             st.info(f"No hay datos de gastos para graficar en {mes_seleccionado}.")
 
-# --- 5. PÁGINA: REGISTRO DIARIO ---
+# --- 5. PÁGINA: REGISTRO DIARIO (Filtro por defecto en Agosto o Mes en curso) ---
 elif pagina == "📅 Registro Diario":
     st.title("Registro Diario de Movimientos")
     st.write("Visualizá todos tus movimientos cargados y exportalos.")
     
     meses_historicos = st.session_state.gastos['Mes'].dropna().unique().tolist() if not st.session_state.gastos.empty else []
-    mes_filtro = st.selectbox("Filtrar por Mes", options=["Ver Todos"] + meses_historicos)
+    
+    # Posicionar el filtro por defecto en "Agosto" (mes actual) si existe
+    indice_mes_def = meses_historicos.index("Agosto") if "Agosto" in meses_historicos else 0
+    opciones_filtro = ["Ver Todos"] + meses_historicos
+    
+    mes_filtro = st.selectbox("Filtrar por Mes", options=opciones_filtro, index=(indice_mes_def + 1 if "Agosto" in meses_historicos else 0))
     
     df_mostrar = st.session_state.gastos.copy()
     if mes_filtro != "Ver Todos" and not df_mostrar.empty:
@@ -221,10 +226,10 @@ elif pagina == "➕ Cargar Movimiento":
             with col2:
                 medio = st.selectbox("Medio de Pago", medios_pago_opciones)
                 if medio != "Débito / Efectivo / MP":
-                    mes_imputacion = st.selectbox("Mes de Imputación", ["Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"])
+                    mes_imputacion = st.selectbox("Mes de Imputación", ["Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"], index=1)
                     cuotas = st.number_input("Cuotas", 1, 24, 1)
                 else:
-                    mes_imputacion = "Julio"
+                    mes_imputacion = "Agosto"
                     cuotas = 1
                 
                 moneda = st.selectbox("Moneda", ["Pesos (ARS)", "Dólares (USD)"])
@@ -245,7 +250,7 @@ elif pagina == "➕ Cargar Movimiento":
                 }])
                 st.session_state.gastos = pd.concat([st.session_state.gastos, nuevo_gasto], ignore_index=True)
                 guardar_estado()
-                st.success("¡Gasto guardado con éxito y registrado en el sistema!")
+                st.success("¡Gasto guardado con éxito y registrado permanentemente!")
                 
         else:
             st.subheader("Cargar Ingreso")
@@ -255,7 +260,7 @@ elif pagina == "➕ Cargar Movimiento":
             if st.button("💾 Guardar Ingreso", type="primary", use_container_width=True):
                 nuevo_ingreso = pd.DataFrame([{
                     "Fecha": fecha_ingreso.strftime("%Y-%m-%d"),
-                    "Mes": "Julio",
+                    "Mes": "Agosto",
                     "Fuente": fuente,
                     "Detalle": "Ingreso manual",
                     "Monto ($)": monto_ingreso
@@ -320,6 +325,7 @@ elif pagina == "⚙️ Configurar Tarjetas":
     
     with st.form("form_nueva_tarjeta"):
         st.subheader("Agregar Nueva Tarjeta")
+    
         nuevo_nombre = st.text_input("Nombre de la Tarjeta (Ej. Mastercard Galicia, Visa Macro Roby)")
         nuevo_limite = st.number_input("Límite de Compra ($)", min_value=0.0, value=1000000.0)
         
