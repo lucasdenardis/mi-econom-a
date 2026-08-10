@@ -16,11 +16,11 @@ def cargar_datos_historicos():
     if os.path.exists(archivo_excel):
         try:
             # Leer pestaña de Gastos (ignorando las filas de encabezado de texto)
-            df_gastos = pd.read_excel(archivo_excel, sheet_name='Gastos', skiprows=2)
+            df_gastos = pd.read_excel(archivo_excel, sheet_name='Gastos', header=3)
             df_gastos = df_gastos.dropna(subset=['Fecha', 'Monto ($)'])
             
             # Leer pestaña de Ingresos
-            df_ingresos = pd.read_excel(archivo_excel, sheet_name='Ingresos', skiprows=2)
+            df_ingresos = pd.read_excel(archivo_excel, sheet_name='Ingresos', header=3)
             df_ingresos = df_ingresos.dropna(subset=['Fecha', 'Monto ($)'])
             
             return df_ingresos, df_gastos
