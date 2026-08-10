@@ -203,7 +203,8 @@ elif pagina == "➕ Cargar Movimiento":
             with col1:
                 fecha = st.date_input("Fecha", format="DD/MM/YYYY")
                 descripcion = st.text_input("Descripción (Ej. Supermercado, Amazon)")
-                monto = st.number_input("Monto ($)", min_value=0.0, format="%.2f")
+                # SE AGREGA value=None PARA QUE ARRANQUE VACÍO
+                monto = st.number_input("Monto ($)", min_value=0.0, format="%.2f", value=None, placeholder="Ej. 15000")
                 categoria = st.selectbox("Categoría", [
                     "Supermercado", "Salidas / Gastronomía", "Delivery", "Mascota", 
                     "Gimnasio / CrossFit", "Transporte / Auto", "Salud / Farmacia", 
@@ -235,47 +236,56 @@ elif pagina == "➕ Cargar Movimiento":
                     mes_imputacion = meses[fecha.month - 1] # Asigna el mes automáticamente según la fecha
                 
             if st.button("💾 Guardar Gasto", type="primary", use_container_width=True):
-                monto_final = monto / 2 if comparte else monto
-                
-                nuevo_dato = {
-                    "fecha": fecha.strftime("%Y-%m-%d"),
-                    "tipo": "Variable",
-                    "descripcion": descripcion,
-                    "monto": monto_final,
-                    "categoria": categoria,
-                    "comparte_tomas": comparte,
-                    "medio_pago": medio_pago_final,
-                    "cuotas": cuotas,
-                    "mes_imputacion": mes_imputacion
-                }
-                supabase.table("movimientos").insert(nuevo_dato).execute()
-                st.success("¡Gasto guardado con éxito en la nube!")
-                st.rerun()
+                # VALIDACIÓN DE MONTO VACÍO
+                if monto is None or monto <= 0:
+                    st.error("⚠️ Por favor, ingresá un monto válido antes de guardar.")
+                else:
+                    monto_final = monto / 2 if comparte else monto
+                    
+                    nuevo_dato = {
+                        "fecha": fecha.strftime("%Y-%m-%d"),
+                        "tipo": "Variable",
+                        "descripcion": descripcion,
+                        "monto": monto_final,
+                        "categoria": categoria,
+                        "comparte_tomas": comparte,
+                        "medio_pago": medio_pago_final,
+                        "cuotas": cuotas,
+                        "mes_imputacion": mes_imputacion
+                    }
+                    supabase.table("movimientos").insert(nuevo_dato).execute()
+                    st.success("¡Gasto guardado con éxito en la nube!")
+                    st.rerun()
                 
         else:
             st.subheader("Cargar Ingreso")
             fecha_ing = st.date_input("Fecha", format="DD/MM/YYYY")
             fuente = st.selectbox("Fuente", ["Residencia (Epidemiología)", "Laboratorio", "Otros ingresos"])
-            monto_ingreso = st.number_input("Monto ($)", min_value=0.0)
+            # SE AGREGA value=None PARA QUE ARRANQUE VACÍO
+            monto_ingreso = st.number_input("Monto ($)", min_value=0.0, format="%.2f", value=None, placeholder="Ej. 500000")
             
             meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
             mes_imp_ing = st.selectbox("Mes Imputación", meses, index=fecha_ing.month - 1)
             
             if st.button("💾 Guardar Ingreso", type="primary", use_container_width=True):
-                nuevo_ingreso = {
-                    "fecha": fecha_ing.strftime("%Y-%m-%d"),
-                    "tipo": "Ingreso",
-                    "descripcion": fuente,
-                    "monto": monto_ingreso,
-                    "categoria": "Ingreso",
-                    "comparte_tomas": False,
-                    "medio_pago": "Transferencia / Depósito",
-                    "cuotas": 1,
-                    "mes_imputacion": mes_imp_ing
-                }
-                supabase.table("movimientos").insert(nuevo_ingreso).execute()
-                st.success("¡Ingreso guardado con éxito!")
-                st.rerun()
+                # VALIDACIÓN DE MONTO VACÍO
+                if monto_ingreso is None or monto_ingreso <= 0:
+                    st.error("⚠️ Por favor, ingresá un monto válido antes de guardar.")
+                else:
+                    nuevo_ingreso = {
+                        "fecha": fecha_ing.strftime("%Y-%m-%d"),
+                        "tipo": "Ingreso",
+                        "descripcion": fuente,
+                        "monto": monto_ingreso,
+                        "categoria": "Ingreso",
+                        "comparte_tomas": False,
+                        "medio_pago": "Transferencia / Depósito",
+                        "cuotas": 1,
+                        "mes_imputacion": mes_imp_ing
+                    }
+                    supabase.table("movimientos").insert(nuevo_ingreso).execute()
+                    st.success("¡Ingreso guardado con éxito!")
+                    st.rerun()
 
 elif pagina == "📅 Registro Diario":
     st.title("Registro Histórico")
@@ -289,6 +299,7 @@ elif pagina == "🔄 Fijos y Automatización":
     st.title("Confirmación de Gastos Fijos")
     st.write("Confirmá el monto real de tus obligaciones para que impacten en el balance.")
     
+    # En esta pantalla dejamos el value con el monto estimado para que sea más rápido confirmar
     fijos_estimados = [
         {"nombre": "Expensas", "cat": "Expensas", "estimado": 120000},
         {"nombre": "EPEC (Luz)", "cat": "Luz", "estimado": 31622},
@@ -337,13 +348,17 @@ elif pagina == "⚙️ Configurar Tarjetas":
         with col1:
             nuevo_nombre = st.text_input("Nombre (Ej. Visa Galicia)")
         with col2:
-            nuevo_limite = st.number_input("Límite de Compra ($)", min_value=0.0, step=100000.0)
+            # SE AGREGA value=None PARA QUE ARRANQUE VACÍO
+            nuevo_limite = st.number_input("Límite de Compra ($)", min_value=0.0, step=100000.0, value=None, placeholder="Ej. 1000000")
             
         btn_agregar = st.form_submit_button("Guardar Tarjeta", type="primary")
-        if btn_agregar and nuevo_nombre:
-            supabase.table("tarjetas").insert({"nombre": nuevo_nombre, "limite": nuevo_limite, "activo": True}).execute()
-            st.success("¡Tarjeta agregada!")
-            st.rerun()
+        if btn_agregar:
+            if nuevo_nombre and nuevo_limite is not None:
+                supabase.table("tarjetas").insert({"nombre": nuevo_nombre, "limite": nuevo_limite, "activo": True}).execute()
+                st.success("¡Tarjeta agregada!")
+                st.rerun()
+            else:
+                st.error("⚠️ Completá el nombre y el límite de la tarjeta.")
             
     st.markdown("---")
     
