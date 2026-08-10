@@ -63,7 +63,7 @@ if 'gastos' not in st.session_state:
 if 'ingresos' not in st.session_state:
     st.session_state.ingresos = df_ingresos_hist
 
-# Cargar persistencia local de forma ultra segura (si falla, borra el archivo corrupto)
+# Cargar persistencia local asegurando lectura limpia
 if os.path.exists(ARCHIVO_DATOS):
     try:
         with open(ARCHIVO_DATOS, "r") as f:
@@ -75,8 +75,8 @@ if os.path.exists(ARCHIVO_DATOS):
             if "tarjetas" in data and isinstance(data["tarjetas"], list) and len(data["tarjetas"]) > 0:
                 st.session_state.tarjetas = data["tarjetas"]
     except Exception:
-        # Si el JSON está roto, lo eliminamos para evitar bloqueos
-        os.remove(ARCHIVO_DATOS)
+        if os.path.exists(ARCHIVO_DATOS):
+            os.remove(ARCHIVO_DATOS)
 
 def guardar_estado():
     try:
@@ -96,7 +96,7 @@ def guardar_estado():
 def formato_arg(valor):
     return f"${float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# --- 3. NAVEGACIÓN LATERAL ---
+# --- 3. NAVEGACIÓN LATERAL (Cargar Movimiento por defecto en index=1) ---
 with st.sidebar:
     st.title("💸 Mi Economía")
     st.markdown("---")
@@ -107,7 +107,7 @@ with st.sidebar:
         "🔄 Fijos y Automatización", 
         "💳 Estado de Tarjetas",
         "⚙️ Configurar Tarjetas"
-    ])
+    ], index=1)
     st.markdown("---")
 
 # --- 4. PÁGINA: DASHBOARD GENERAL ---
