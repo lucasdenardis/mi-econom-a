@@ -51,27 +51,36 @@ def cargar_datos_historicos():
 
 df_ingresos_hist, df_gastos_hist = cargar_datos_historicos()
 
-# Inicializar Estado de Sesión con persistencia JSON
+# Inicializar Estado de Sesión de forma segura
+if 'tarjetas' not in st.session_state:
+    st.session_state.tarjetas = [
+        {"nombre": "Visa Macro", "limite": 4500000, "tipo": "Crédito"}
+    ]
+
 if 'gastos' not in st.session_state:
-    if os.path.exists(ARCHIVO_DATOS):
-        with open(ARCHIVO_DATOS, "r") as f:
-            data = json.load(f)
-            st.session_state.gastos = pd.DataFrame(data.get("gastos", []))
-            st.session_state.tarjetas = data.get("tarjetas", [
-                {"nombre": "Visa Macro", "limite": 4500000, "tipo": "Cuotas / Compra"}
-            ])
-    else:
-        st.session_state.gastos = df_gastos_hist
-        st.session_state.tarjetas = [
-            {"nombre": "Visa Macro", "limite": 4500000, "tipo": "Cuotas / Compra"}
-        ]
+    st.session_state.gastos = df_gastos_hist
 
 if 'ingresos' not in st.session_state:
     st.session_state.ingresos = df_ingresos_hist
 
+# Cargar persistencia local si existe
+if os.path.exists(ARCHIVO_DATOS):
+    try:
+        with open(ARCHIVO_DATOS, "r") as f:
+            data = json.load(f)
+            if "gastos" in data and len(data["gastos"]) > 0:
+                st.session_state.gastos = pd.DataFrame(data["gastos"])
+            if "ingresos" in data and len(data["ingresos"]) > 0:
+                st.session_state.ingresos = pd.DataFrame(data["ingresos"])
+            if "tarjetas" in data and len(data["tarjetas"]) > 0:
+                st.session_state.tarjetas = data["tarjetas"]
+    except Exception:
+        pass
+
 def guardar_estado():
     data = {
-        "gastos": st.session_state.gastos.to_dict(orient="records"),
+        "gastos": st.session_state.gastos.to_dict(orient="records") if not st.session_state.gastos.empty else [],
+        "ingresos": st.session_state.ingresos.to_dict(orient="records") if not st.session_state.ingresos.empty else [],
         "tarjetas": st.session_state.tarjetas
     }
     with open(ARCHIVO_DATOS, "w") as f:
@@ -152,7 +161,7 @@ if pagina == "📊 Dashboard General":
 # --- 5. PÁGINA: REGISTRO DIARIO ---
 elif pagina == "📅 Registro Diario":
     st.title("Registro Diario de Movimientos")
-    st.write("Visualizá todos tus movimientos cargados (históricos y nuevos) y exportalos.")
+    st.write("Visualizá todos tus movimientos cargados y exportalos.")
     
     meses_historicos = st.session_state.gastos['Mes'].dropna().unique().tolist() if not st.session_state.gastos.empty else []
     mes_filtro = st.selectbox("Filtrar por Mes", options=["Ver Todos"] + meses_historicos)
@@ -206,7 +215,7 @@ elif pagina == "➕ Cargar Movimiento":
                     mes_imputacion = st.selectbox("Mes de Imputación", ["Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"])
                     cuotas = st.number_input("Cuotas", 1, 24, 1)
                 else:
-                    mes_imputacion = "Julio" # por defecto
+                    mes_imputacion = "Julio"
                     cuotas = 1
                 
                 moneda = st.selectbox("Moneda", ["Pesos (ARS)", "Dólares (USD)"])
@@ -216,7 +225,6 @@ elif pagina == "➕ Cargar Movimiento":
                         st.number_input("Cotización MEP (ARS)", min_value=1000.0)
             
             if st.button("💾 Guardar Gasto", type="primary", use_container_width=True):
-                # Crear nueva fila de gasto
                 nuevo_gasto = pd.DataFrame([{
                     "Fecha": fecha.strftime("%Y-%m-%d"),
                     "Mes": mes_imputacion,
@@ -284,9 +292,8 @@ elif pagina == "💳 Estado de Tarjetas":
         with col_lim1:
             st.write(f"Límite Configurado: {formato_arg(t['limite'])}")
             
-            # Calcular cuánto se gastó con esta tarjeta en el mes actual
-            if not st.session_state.gastos.empty:
-                gasto_tc = st.session_state.gastos[st.session_state.gastos['Medio_Pago'] == t["nombre"]]['Monto ($)'].sum() if 'Medio_Pago' in st.session_state.gastos.columns else 0
+            if not st.session_state.gastos.empty and 'Medio de Pago' in st.session_state.gastos.columns:
+                gasto_tc = st.session_state.gastos[st.session_state.gastos['Medio de Pago'] == t["nombre"]]['Monto ($)'].sum()
             else:
                 gasto_tc = 0
                 
