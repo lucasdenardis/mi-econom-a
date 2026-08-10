@@ -8,7 +8,7 @@ import json
 # --- 1. CONFIGURACIÓN MODERNA DE LA INTERFAZ ---
 st.set_page_config(page_title="Mi Economía | Dashboard", layout="wide", page_icon="💸")
 
-# CSS para botones grandes y táctiles en mobile
+# CSS para botones grandes y táctiles en mobile y orden visual
 st.markdown("""
 <style>
 [data-testid="stSidebar"] div[role="radiogroup"] > label {
@@ -28,55 +28,57 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. GESTIÓN DE DATOS Y PERSISTENCIA (JSON + EXCEL) ---
+# --- 2. GESTIÓN DE DATOS UNIFICADA (Excel + JSON de respaldo) ---
 ARCHIVO_DATOS = "datos_usuario.json"
 
 @st.cache_data
-def cargar_datos_historicos():
+def cargar_datos_maestros():
     archivo_excel = "Planificador_Financiero_Fusionado FINAL (1).xlsx"
-    df_gastos_hist = pd.DataFrame()
-    df_ingresos_hist = pd.DataFrame()
+    df_g_hist = pd.DataFrame()
+    df_i_hist = pd.DataFrame()
     
     if os.path.exists(archivo_excel):
         try:
-            df_gastos_hist = pd.read_excel(archivo_excel, sheet_name='Gastos', header=3)
-            df_gastos_hist = df_gastos_hist.dropna(subset=['Fecha', 'Monto ($)'])
+            df_g_hist = pd.read_excel(archivo_excel, sheet_name='Gastos', header=3)
+            df_g_hist = df_g_hist.dropna(subset=['Fecha', 'Monto ($)'])
             
-            df_ingresos_hist = pd.read_excel(archivo_excel, sheet_name='Ingresos', header=3)
-            df_ingresos_hist = df_ingresos_hist.dropna(subset=['Fecha', 'Monto ($)'])
+            df_i_hist = pd.read_excel(archivo_excel, sheet_name='Ingresos', header=3)
+            df_i_hist = df_i_hist.dropna(subset=['Fecha', 'Monto ($)'])
         except Exception as e:
             st.error(f"Error leyendo el Excel: {e}")
             
-    return df_ingresos_hist, df_gastos_hist
+    return df_i_hist, df_g_hist
 
-df_ingresos_hist, df_gastos_hist = cargar_datos_historicos()
+df_ingresos_base, df_gastos_base = cargar_datos_maestros()
 
-# Inicializar Estado de Sesión por defecto
+# Inicializar Estado de Sesión global
 if 'tarjetas' not in st.session_state:
     st.session_state.tarjetas = [
         {"nombre": "Visa Macro", "limite": 4500000.0, "tipo": "Crédito"}
     ]
 
 if 'gastos' not in st.session_state:
-    st.session_state.gastos = df_gastos_hist
+    st.session_state.gastos = df_gastos_base
 
 if 'ingresos' not in st.session_state:
-    st.session_state.ingresos = df_ingresos_hist
+    st.session_state.ingresos = df_ingresos_base
 
-# Cargar persistencia local asegurando lectura limpia
+# Sincronización automática con el JSON compartido en la nube
 if os.path.exists(ARCHIVO_DATOS):
     try:
         with open(ARCHIVO_DATOS, "r") as f:
             data = json.load(f)
             if "gastos" in data and isinstance(data["gastos"], list) and len(data["gastos"]) > 0:
-                st.session_state.gastos = pd.DataFrame(data["gastos"])
+                df_json_gastos = pd.DataFrame(data["gastos"])
+                # Combinamos historial base con los nuevos guardados para no perder nada en ningún dispositivo
+                st.session_state.gastos = pd.concat([df_gastos_base, df_json_gastos]).drop_duplicates(subset=['Fecha', 'Monto ($)', 'Descripción'], keep='last')
             if "ingresos" in data and isinstance(data["ingresos"], list) and len(data["ingresos"]) > 0:
-                st.session_state.ingresos = pd.DataFrame(data["ingresos"])
+                df_json_ingresos = pd.DataFrame(data["ingresos"])
+                st.session_state.ingresos = pd.concat([df_ingresos_base, df_json_ingresos]).drop_duplicates(subset=['Fecha', 'Monto ($)'], keep='last')
             if "tarjetas" in data and isinstance(data["tarjetas"], list) and len(data["tarjetas"]) > 0:
                 st.session_state.tarjetas = data["tarjetas"]
     except Exception:
-        if os.path.exists(ARCHIVO_DATOS):
-            os.remove(ARCHIVO_DATOS)
+        pass
 
 def guardar_estado():
     try:
@@ -96,7 +98,7 @@ def guardar_estado():
 def formato_arg(valor):
     return f"${float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# --- 3. NAVEGACIÓN LATERAL (Cargar Movimiento por defecto en index=1) ---
+# --- 3. NAVEGACIÓN LATERAL (Abre directo en Cargar Movimiento: index=1) ---
 with st.sidebar:
     st.title("💸 Mi Economía")
     st.markdown("---")
