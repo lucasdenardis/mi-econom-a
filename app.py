@@ -1,354 +1,315 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import os
-import json
-import datetime
+from datetime import date, datetime
+from pathlib import Path
 
-# --- 1. CONFIGURACIÓN MODERNA DE LA INTERFAZ ---
-st.set_page_config(page_title="Mi Economía | Dashboard", layout="wide", page_icon="💸")
+st.set_page_config(page_title="Finanzas Personales", page_icon="💰", layout="wide")
 
-# CSS para botones grandes y táctiles en mobile
 st.markdown("""
 <style>
-[data-testid="stSidebar"] div[role="radiogroup"] > label {
-    padding: 15px 20px;
-    margin-bottom: 15px;
-    background-color: #1E1E24;
-    border-radius: 10px;
-    border: 1px solid #444;
-}
-[data-testid="stSidebar"] div[role="radiogroup"] > label p {
-    font-size: 18px !important;
-    font-weight: 600 !important;
-}
-[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
-    background-color: #2E2E38;
-}
+.stApp{background:#0b0f14}
+section[data-testid="stSidebar"]{background:#111821;border-right:1px solid #26313d}
+section[data-testid="stSidebar"] .stButton>button{width:100%;min-height:55px;margin:5px 0;border-radius:14px;border:1px solid #2b3744;background:#18212b;color:#fff;font-weight:700}
+.kpi{background:linear-gradient(145deg,#151d26,#10161d);border:1px solid #293542;border-radius:18px;padding:17px;min-height:112px}
+.kt{color:#91a0b0;font-size:13px}.kv{color:#f5f7fa;font-size:24px;font-weight:800;margin-top:7px}
+@media(max-width:768px){.block-container{padding:.75rem .65rem 2rem}.kv{font-size:20px}}
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. GESTIÓN DE DATOS Y PERSISTENCIA ROBUSTA ---
-ARCHIVO_DATOS = "datos_usuario.json"
+EXCEL_NAME = "Planificador_Financiero_Fusionado FINAL (1).xlsx"
+MONTHS = {1:"Enero",2:"Febrero",3:"Marzo",4:"Abril",5:"Mayo",6:"Junio",7:"Julio",8:"Agosto",9:"Septiembre",10:"Octubre",11:"Noviembre",12:"Diciembre"}
 
-@st.cache_data
-def cargar_datos_maestros():
-    archivo_excel = "Planificador_Financiero_Fusionado FINAL (1).xlsx"
-    df_g_hist = pd.DataFrame()
-    df_i_hist = pd.DataFrame()
-    
-    if os.path.exists(archivo_excel):
-        try:
-            df_g_hist = pd.read_excel(archivo_excel, sheet_name='Gastos', header=3)
-            df_g_hist = df_g_hist.dropna(subset=['Fecha', 'Monto ($)'])
-            
-            df_i_hist = pd.read_excel(archivo_excel, sheet_name='Ingresos', header=3)
-            df_i_hist = df_i_hist.dropna(subset=['Fecha', 'Monto ($)'])
-        except Exception as e:
-            st.error(f"Error leyendo el Excel: {e}")
-            
-    return df_i_hist, df_g_hist
+# Catálogo exacto recuperado del Excel
+EXCEL_CATEGORIES = ['Compras Online / Impulsivas', 'Impuestos y Costos TC', 'Educación / Cursos', 'Delivery', 'Prepaga', 'Transporte / Auto', 'Salidas / Gastronomía', 'Otros Gastos', 'Luz', 'Seguros Adicionales', 'Telefonía', 'Agua', 'Gas', 'Profesional (Colegiatura)', 'Suscripciones', 'Supermercado', 'Tarjeta', 'Monotributo', 'Internet']
+EXCEL_SOURCES = ['Residencia (Epidemiología)', 'Centro de Castración de Saldán', 'Laboratorio SEVEDIC', 'Otros ingresos variables', 'CDC/Hospital', 'Laboratorio', 'CDC', 'Saldan', 'Residencia']
+EXCEL_PAYMENT_METHODS = ['Efectivo/MP', 'Tarjeta de Crédito']
+EXCEL_FIXED_CATEGORIES = []
 
-df_ingresos_base, df_gastos_base = cargar_datos_maestros()
+def money(v):
+    try: x=float(v or 0)
+    except: x=0
+    return "$ " + f"{x:,.2f}".replace(",","X").replace(".",",").replace("X",".")
 
-# Inicializar Estado de Sesión global
-if 'tarjetas' not in st.session_state:
-    st.session_state.tarjetas = [
-        {"nombre": "Visa Macro", "limite": 4500000.0, "tipo": "Crédito"}
-    ]
+def parse_amount(v):
+    if isinstance(v,(int,float)): return float(v)
+    s=str(v).strip().replace("$","").replace(" ","")
+    if not s: return 0.0
+    if "," in s and "." in s:
+        s=s.replace(".","").replace(",",".") if s.rfind(",")>s.rfind(".") else s.replace(",","")
+    elif "," in s: s=s.replace(".","").replace(",",".")
+    return float(s)
 
-if 'gastos' not in st.session_state:
-    st.session_state.gastos = df_gastos_base
+def iso(v):
+    if pd.isna(v) or v is None or str(v).strip()=="": return None
+    if isinstance(v,(pd.Timestamp,datetime,date)):
+        return pd.Timestamp(v).strftime("%Y-%m-%d")
+    for f in ("%Y-%m-%d","%d/%m/%Y","%d-%m-%Y"):
+        try:return datetime.strptime(str(v)[:10],f).strftime("%Y-%m-%d")
+        except:pass
+    return None
 
-if 'ingresos' not in st.session_state:
-    st.session_state.ingresos = df_ingresos_base
+def dmy(v):
+    try:return datetime.strptime(str(v)[:10],"%Y-%m-%d").strftime("%d/%m/%Y")
+    except:return ""
 
-# Recuperar datos guardados localmente
-if os.path.exists(ARCHIVO_DATOS):
+def month_label(m):
+    try:y,mm=m.split("-"); return f"{MONTHS[int(mm)]} {y}"
+    except:return m
+
+@st.cache_resource
+def db():
+    from supabase import create_client
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+sb=db()
+
+@st.cache_data(ttl=20)
+def table(name):
+    r=sb.table(name).select("*").execute()
+    return pd.DataFrame(r.data or [])
+
+def refresh(): st.cache_data.clear(); st.rerun()
+def ins(t,row): sb.table(t).insert(row).execute(); refresh()
+def upd(t,rid,row): sb.table(t).update(row).eq("id",rid).execute(); refresh()
+def dele(t,rid): sb.table(t).delete().eq("id",rid).execute(); refresh()
+
+def movements():
+    df=table("movimientos")
+    if df.empty:return pd.DataFrame(columns=["id","fecha","tipo","descripcion","monto","categoria","comparte_tomas","medio_pago","cuotas","mes_imputacion","moneda","cotizacion_mep","monto_pesos"])
+    df["fecha"]=df["fecha"].astype(str).str[:10]
+    for c in ["monto","monto_pesos","cotizacion_mep"]: df[c]=pd.to_numeric(df[c],errors="coerce").fillna(0)
+    return df
+
+def active_values(t):
+    df=table(t)
+    if df.empty:return []
+    return df.loc[df["activo"]==True,"nombre"].astype(str).tolist()
+
+def ensure_excel_import():
+    # Importación idempotente: solo cuando movimientos está vacío.
     try:
-        with open(ARCHIVO_DATOS, "r") as f:
-            data = json.load(f)
-            if "gastos" in data and isinstance(data["gastos"], list) and len(data["gastos"]) > 0:
-                df_json_gastos = pd.DataFrame(data["gastos"])
-                st.session_state.gastos = pd.concat([df_gastos_base, df_json_gastos]).drop_duplicates(subset=['Fecha', 'Monto ($)', 'Descripción'], keep='last')
-            if "ingresos" in data and isinstance(data["ingresos"], list) and len(data["ingresos"]) > 0:
-                df_json_ingresos = pd.DataFrame(data["ingresos"])
-                st.session_state.ingresos = pd.concat([df_ingresos_base, df_json_ingresos]).drop_duplicates(subset=['Fecha', 'Monto ($)'], keep='last')
-            if "tarjetas" in data and isinstance(data["tarjetas"], list) and len(data["tarjetas"]) > 0:
-                st.session_state.tarjetas = data["tarjetas"]
-    except Exception:
-        pass
-
-def guardar_estado():
-    try:
-        gasto_dict = st.session_state.gastos.to_dict(orient="records") if isinstance(st.session_state.gastos, pd.DataFrame) and not st.session_state.gastos.empty else []
-        ingreso_dict = st.session_state.ingresos.to_dict(orient="records") if isinstance(st.session_state.ingresos, pd.DataFrame) and not st.session_state.ingresos.empty else []
-        
-        data = {
-            "gastos": gasto_dict,
-            "ingresos": ingreso_dict,
-            "tarjetas": st.session_state.tarjetas
-        }
-        with open(ARCHIVO_DATOS, "w") as f:
-            json.dump(data, f)
+        if len(table("movimientos"))>0:return
+        p=Path(EXCEL_NAME)
+        if not p.exists():return
+        gg=pd.read_excel(p,sheet_name="Gastos",header=3)
+        ii=pd.read_excel(p,sheet_name="Ingresos",header=3)
+        rows=[]
+        for _,r in gg.iterrows():
+            f=iso(r.get("Fecha"))
+            if not f:continue
+            try:m=parse_amount(r.get("Monto ($)",0))
+            except:continue
+            if m==0:continue
+            rows.append({"fecha":f,"tipo":"Gasto Fijo" if str(r.get("Tipo","")).strip().lower()=="fijo" else "Gasto Variable",
+                         "descripcion":str(r.get("Descripción","") if pd.notna(r.get("Descripción")) else ""),
+                         "monto":m,"categoria":str(r.get("Categoría","Otros Gastos")),
+                         "comparte_tomas":False,"medio_pago":str(r.get("Medio de Pago","")),
+                         "cuotas":1,"mes_imputacion":f[:7],"moneda":"ARS","cotizacion_mep":0,"monto_pesos":m})
+        for _,r in ii.iterrows():
+            f=iso(r.get("Fecha"))
+            if not f:continue
+            try:m=parse_amount(r.get("Monto ($)",0))
+            except:continue
+            if m==0:continue
+            rows.append({"fecha":f,"tipo":"Ingreso","descripcion":str(r.get("Detalle","") if pd.notna(r.get("Detalle")) else ""),
+                         "monto":m,"categoria":str(r.get("Fuente","Otros ingresos variables")),
+                         "comparte_tomas":False,"medio_pago":"Transferencia","cuotas":1,
+                         "mes_imputacion":f[:7],"moneda":"ARS","cotizacion_mep":0,"monto_pesos":m})
+        for j in range(0,len(rows),100): sb.table("movimientos").insert(rows[j:j+100]).execute()
     except Exception as e:
-        st.error(f"Error al guardar los datos: {e}")
+        st.sidebar.warning(f"Importación Excel: {e}")
 
-def formato_arg(valor):
-    return f"${float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+ensure_excel_import()
 
-# --- 3. NAVEGACIÓN LATERAL (Inicia en Cargar Movimiento: index=1) ---
+if "page" not in st.session_state: st.session_state.page="➕ Cargar Movimiento"
+pages=["📊 Dashboard General","➕ Cargar Movimiento","📅 Registro Diario","🔄 Fijos y Automatización","💳 Estado de Tarjetas","⚙️ Configuración"]
 with st.sidebar:
-    st.title("💸 Mi Economía")
-    st.markdown("---")
-    pagina = st.radio("Menú Principal", [
-        "📊 Dashboard General", 
-        "➕ Cargar Movimiento",
-        "📅 Registro Diario",
-        "🔄 Fijos y Automatización", 
-        "💳 Estado de Tarjetas",
-        "⚙️ Configurar Tarjetas"
-    ], index=1)
-    st.markdown("---")
+    st.markdown("## 💰 Finanzas")
+    st.caption("Sincronización en la nube")
+    for p in pages:
+        if st.button(p,key="nav_"+p):
+            st.session_state.page=p; st.rerun()
+    st.divider()
+    st.caption("Inicio rápido: Cargar Movimiento")
 
-# --- 4. PÁGINA: DASHBOARD GENERAL ---
-if pagina == "📊 Dashboard General":
-    st.title("Panel de Control Financiero")
-    
-    meses_disponibles = st.session_state.gastos['Mes'].dropna().unique().tolist() if not st.session_state.gastos.empty else ["Mes Actual"]
-    indice_por_defecto = meses_disponibles.index("Agosto") if "Agosto" in meses_disponibles else (meses_disponibles.index("Julio") if "Julio" in meses_disponibles else 0)
-    mes_seleccionado = st.selectbox("Seleccionar Mes de Análisis", options=meses_disponibles, index=indice_por_defecto)
-    
-    df_gastos_mes = st.session_state.gastos[st.session_state.gastos['Mes'] == mes_seleccionado] if not st.session_state.gastos.empty else pd.DataFrame()
-    df_ingresos_mes = st.session_state.ingresos[st.session_state.ingresos['Mes'] == mes_seleccionado] if not st.session_state.ingresos.empty else pd.DataFrame()
-    
-    ingresos_totales = df_ingresos_mes['Monto ($)'].sum() if not df_ingresos_mes.empty else 0
-    
-    if not df_gastos_mes.empty:
-        mask_tc = df_gastos_mes['Medio de Pago'].astype(str).str.contains("Tarjeta|Visa|Mastercard", case=False, na=False)
-        salidas_efectivas = df_gastos_mes[~mask_tc]['Monto ($)'].sum()
-        deuda_tc = df_gastos_mes[mask_tc]['Monto ($)'].sum()
-    else:
-        salidas_efectivas = 0
-        deuda_tc = 0
+def page_load():
+    st.title("➕ Cargar Movimiento")
+    typ=st.segmented_control("Tipo",["🔴 Gasto Variable","🟢 Ingreso"],default="🔴 Gasto Variable")
+    is_income=typ.startswith("🟢")
+    cats=active_values("categorias") or EXCEL_CATEGORIES
+    payments=active_values("medios_pago") or EXCEL_PAYMENT_METHODS
+    with st.form("new",clear_on_submit=True):
+        a,b=st.columns(2)
+        with a:
+            f=st.date_input("Fecha",date.today(),format="DD/MM/YYYY")
+            desc=st.text_input("Descripción / Detalle")
+            amt=st.text_input("Monto",placeholder="1.500.000,00")
+        with b:
+            cat=st.selectbox("Categoría / Fuente",cats)
+            medio=st.selectbox("Medio de pago",payments)
+            share=st.toggle("Dividir 50% con Tomas",disabled=is_income)
+        c,d,e=st.columns(3)
+        with c: cur=st.selectbox("Moneda",["ARS - Pesos","USD - Dólares"])
+        with d: cuotas=st.number_input("Cuotas",1,60,1)
+        with e: mep=st.number_input("Dólar MEP",0.0,step=1.0,disabled=cur.startswith("ARS"))
+        mes=st.text_input("Mes de imputación",f.strftime("%Y-%m"))
+        ok=st.form_submit_button("💾 GUARDAR Y SINCRONIZAR",use_container_width=True)
+    if ok:
+        try:
+            m=parse_amount(amt)
+            if m<=0: raise ValueError("El monto debe ser mayor que cero.")
+            pesos=m if cur.startswith("ARS") else m*mep
+            if cur.startswith("USD") and mep<=0: raise ValueError("Ingresá la cotización MEP.")
+            if share and not is_income: pesos*=.5
+            ins("movimientos",{"fecha":f.strftime("%Y-%m-%d"),"tipo":"Ingreso" if is_income else "Gasto Variable",
+                "descripcion":desc.strip(),"monto":m,"categoria":cat,"comparte_tomas":bool(share),
+                "medio_pago":medio,"cuotas":int(cuotas),"mes_imputacion":mes[:7],
+                "moneda":"USD" if cur.startswith("USD") else "ARS","cotizacion_mep":float(mep),"monto_pesos":float(pesos)})
+        except Exception as e: st.error(str(e))
 
-    ahorro_real = ingresos_totales - salidas_efectivas - deuda_tc
-    
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Ingresos Totales", formato_arg(ingresos_totales), "Liquidez")
-    col2.metric("Salidas Efectivas", formato_arg(salidas_efectivas), "Débito/Efectivo", delta_color="inverse")
-    col3.metric("Deuda TC Mes", formato_arg(deuda_tc), "Tarjetas", delta_color="inverse")
-    col4.metric("Ahorro Real", formato_arg(ahorro_real), "Disponible libre")
+def page_dash():
+    st.title("📊 Dashboard General")
+    df=movements()
+    if df.empty: st.info("No hay movimientos."); return
+    months=sorted(df.fecha.str[:7].unique(),reverse=True)
+    default="2026-08" if "2026-08" in months else (date.today().strftime("%Y-%m") if date.today().strftime("%Y-%m") in months else months[0])
+    m=st.selectbox("Mes",months,index=months.index(default),format_func=month_label)
+    x=df[df.fecha.str[:7]==m]
+    inc=x.loc[x.tipo=="Ingreso","monto_pesos"].sum()
+    exp=x.loc[x.tipo!="Ingreso","monto_pesos"].sum()
+    bal=inc-exp
+    cs=st.columns(4)
+    for col,title,val in zip(cs,["Ingresos","Gastos","Balance","Movimientos"],[inc,exp,bal,len(x)]):
+        col.markdown(f'<div class="kpi"><div class="kt">{title}</div><div class="kv">{money(val) if title!="Movimientos" else int(val)}</div></div>',unsafe_allow_html=True)
+    a,b=st.columns(2)
+    with a:
+        fig=go.Figure(go.Waterfall(x=["Ingresos","Gastos","Balance"],y=[inc,-exp,bal],measure=["relative","relative","total"],text=[money(inc),money(-exp),money(bal)],textposition="outside"))
+        fig.update_layout(template="plotly_dark",height=400,margin=dict(l=10,r=10,t=25,b=10))
+        st.plotly_chart(fig,use_container_width=True)
+    with b:
+        q=x[x.tipo!="Ingreso"].groupby("categoria",as_index=False).monto_pesos.sum()
+        if not q.empty:
+            fig=px.pie(q,names="categoria",values="monto_pesos",hole=.48)
+            fig.update_layout(template="plotly_dark",height=400,margin=dict(l=10,r=10,t=25,b=10))
+            st.plotly_chart(fig,use_container_width=True)
 
-    st.markdown("---")
-    
-    col_graf1, col_graf2 = st.columns(2)
-    
-    with col_graf1:
-        st.subheader(f"Flujo de Caja ({mes_seleccionado})")
-        fig_waterfall = go.Figure(go.Waterfall(
-            name = "Flujo", orientation = "v",
-            measure = ["relative", "relative", "relative", "total"],
-            x = ["Ingresos", "Gastos Corrientes", "Tarjetas (Cuotas Mes)", "Ahorro Real"],
-            textposition = "outside",
-            y = [ingresos_totales, -salidas_efectivas, -deuda_tc, ahorro_real],
-            connector = {"line":{"color":"rgb(63, 63, 63)"}},
-        ))
-        fig_waterfall.update_layout(template="plotly_dark", margin=dict(l=20, r=20, t=40, b=20))
-        st.plotly_chart(fig_waterfall, use_container_width=True)
-
-    with col_graf2:
-        st.subheader(f"Distribución de Gastos ({mes_seleccionado})")
-        if not df_gastos_mes.empty:
-            df_plot = df_gastos_mes.groupby('Categoría')['Monto ($)'].sum().reset_index()
-            fig_pie = px.pie(df_plot, values='Monto ($)', names='Categoría', hole=0.4, template="plotly_dark")
-            st.plotly_chart(fig_pie, use_container_width=True)
-        else:
-            st.info(f"No hay datos de gastos para graficar en {mes_seleccionado}.")
-
-# --- 5. PÁGINA: REGISTRO DIARIO (Filtro por defecto en Agosto o Mes en curso) ---
-elif pagina == "📅 Registro Diario":
-    st.title("Registro Diario de Movimientos")
-    st.write("Visualizá todos tus movimientos cargados y exportalos.")
-    
-    meses_historicos = st.session_state.gastos['Mes'].dropna().unique().tolist() if not st.session_state.gastos.empty else []
-    
-    # Posicionar el filtro por defecto en "Agosto" (mes actual) si existe
-    indice_mes_def = meses_historicos.index("Agosto") if "Agosto" in meses_historicos else 0
-    opciones_filtro = ["Ver Todos"] + meses_historicos
-    
-    mes_filtro = st.selectbox("Filtrar por Mes", options=opciones_filtro, index=(indice_mes_def + 1 if "Agosto" in meses_historicos else 0))
-    
-    df_mostrar = st.session_state.gastos.copy()
-    if mes_filtro != "Ver Todos" and not df_mostrar.empty:
-        df_mostrar = df_mostrar[df_mostrar['Mes'] == mes_filtro]
-    
-    if not df_mostrar.empty and 'Monto ($)' in df_mostrar.columns:
-        df_mostrar_fmt = df_mostrar.copy()
-        df_mostrar_fmt['Monto ($)'] = df_mostrar_fmt['Monto ($)'].apply(lambda x: formato_arg(x) if pd.notnull(x) else x)
-        st.dataframe(df_mostrar_fmt, use_container_width=True)
-    else:
-        st.info("No hay movimientos registrados para mostrar.")
-    
-    if not df_mostrar.empty:
-        csv = df_mostrar.to_csv(index=False).encode('utf-8')
-        st.download_button(label="📥 Exportar Movimientos a CSV", data=csv, file_name='registro_gastos.csv', mime='text/csv')
-
-# --- 6. PÁGINA: CARGAR MOVIMIENTO ---
-elif pagina == "➕ Cargar Movimiento":
-    st.title("Registrar Nuevo Movimiento")
-    
-    tipo_movimiento = st.segmented_control("Tipo de Registro", ["🔴 Gasto Variable", "🟢 Ingreso"], default="🔴 Gasto Variable")
-    
-    categorias_completas = [
-        "Supermercado", "Salidas / Gastronomía", "Delivery", "Mascota (Chancho)", 
-        "Gimnasio / CrossFit", "Transporte / Auto", "Salud / Farmacia", 
-        "Expensas", "Luz", "Agua", "Gas", "Internet", "Telefonía", 
-        "Prepaga", "Seguro Auto", "Seguros Adicionales", "Monotributo", 
-        "Profesional (Colegiatura)", "Impuestos y Costos TC", 
-        "Compras Online / Impulsivas", "Otros Gastos"
-    ]
-    
-    nombres_tarjetas = [t["nombre"] for t in st.session_state.tarjetas]
-    medios_pago_opciones = ["Débito / Efectivo / MP"] + nombres_tarjetas
-    
-    with st.container(border=True):
-        if tipo_movimiento == "🔴 Gasto Variable":
-            col1, col2 = st.columns(2)
-            with col1:
-                fecha = st.date_input("Fecha", format="DD/MM/YYYY")
-                descripcion = st.text_input("Descripción (Ej. Supermercado, Amazon)")
-                monto = st.number_input("Monto", min_value=0.0, format="%.2f")
-                categoria = st.selectbox("Categoría", categorias_completas)
-                compartido = st.toggle("Dividir 50% con Tomas")
-            
-            with col2:
-                medio = st.selectbox("Medio de Pago", medios_pago_opciones)
-                if medio != "Débito / Efectivo / MP":
-                    mes_imputacion = st.selectbox("Mes de Imputación", ["Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"], index=1)
-                    cuotas = st.number_input("Cuotas", 1, 24, 1)
+def page_daily():
+    st.title("📅 Registro Diario")
+    df=movements()
+    if df.empty:st.info("No hay movimientos.");return
+    months=sorted(df.fecha.str[:7].unique(),reverse=True)
+    default="2026-08" if "2026-08" in months else months[0]
+    m=st.selectbox("Mes",months,index=months.index(default),format_func=month_label)
+    x=df[df.fecha.str[:7]==m].sort_values(["fecha","id"],ascending=[False,False])
+    st.download_button("⬇️ Exportar base completa a CSV",df.to_csv(index=False).encode("utf-8-sig"),f"movimientos_{date.today()}.csv","text/csv",use_container_width=True)
+    for _,r in x.iterrows():
+        rid=int(r.id)
+        with st.expander(f"{dmy(r.fecha)} · {r.descripcion or r.categoria} · {money(r.monto_pesos)}"):
+            with st.form(f"edit{rid}"):
+                a,b=st.columns(2)
+                with a:
+                    nd=st.date_input("Fecha",datetime.strptime(r.fecha,"%Y-%m-%d").date(),format="DD/MM/YYYY")
+                    ndesc=st.text_input("Descripción",str(r.descripcion or ""))
+                    namt=st.text_input("Monto",str(r.monto))
+                with b:
+                    opts=["Gasto Variable","Gasto Fijo","Ingreso"]
+                    nt=st.selectbox("Tipo",opts,index=opts.index(r.tipo) if r.tipo in opts else 0)
+                    cats=list(dict.fromkeys(active_values("categorias")+EXCEL_CATEGORIES+[str(r.categoria)]))
+                    nc=st.selectbox("Categoría / Fuente",cats,index=cats.index(str(r.categoria)))
+                    pays=list(dict.fromkeys(active_values("medios_pago")+EXCEL_PAYMENT_METHODS+[str(r.medio_pago)]))
+                    npay=st.selectbox("Medio de pago",pays,index=pays.index(str(r.medio_pago)))
+                c,d,e=st.columns(3)
+                with c:nq=st.number_input("Cuotas",1,60,int(r.cuotas or 1))
+                with d:nm=st.text_input("Mes imputación",str(r.mes_imputacion or r.fecha[:7]))
+                with e:ncur=st.selectbox("Moneda",["ARS","USD"],index=0 if str(r.moneda)=="ARS" else 1)
+                share=st.toggle("50% con Tomas",bool(r.comparte_tomas),disabled=nt=="Ingreso")
+                mep=st.number_input("Cotización MEP",0.0,value=float(r.cotizacion_mep or 0),disabled=ncur=="ARS")
+                save=st.form_submit_button("💾 Guardar cambios",use_container_width=True)
+            if save:
+                mval=parse_amount(namt); pesos=mval if ncur=="ARS" else mval*mep
+                if ncur=="USD" and mep<=0:st.error("Ingresá MEP.")
                 else:
-                    mes_imputacion = "Agosto"
-                    cuotas = 1
-                
-                moneda = st.selectbox("Moneda", ["Pesos (ARS)", "Dólares (USD)"])
-                if moneda == "Dólares (USD)":
-                    metodo_usd = st.radio("Forma de pago", ["Dólar Tarjeta (Suma impuestos)", "Dólar MEP (Stop Debit)"])
-                    if metodo_usd == "Dólar MEP (Stop Debit)":
-                        st.number_input("Cotización MEP (ARS)", min_value=1000.0)
-            
-            if st.button("💾 Guardar Gasto", type="primary", use_container_width=True):
-                nuevo_gasto = pd.DataFrame([{
-                    "Fecha": fecha.strftime("%Y-%m-%d"),
-                    "Mes": mes_imputacion,
-                    "Descripción": descripcion if descripcion else "Sin descripción",
-                    "Categoría": categoria,
-                    "Tipo": "Variable",
-                    "Monto ($)": monto,
-                    "Medio de Pago": medio
-                }])
-                st.session_state.gastos = pd.concat([st.session_state.gastos, nuevo_gasto], ignore_index=True)
-                guardar_estado()
-                st.success("¡Gasto guardado con éxito y registrado permanentemente!")
-                
-        else:
-            st.subheader("Cargar Ingreso")
-            fuente = st.selectbox("Fuente", ["Residencia (Epidemiología)", "Saldan", "Laboratorio SEVEDIC", "Otros ingresos"])
-            fecha_ingreso = st.date_input("Fecha de Ingreso", format="DD/MM/YYYY")
-            monto_ingreso = st.number_input("Monto ($)", min_value=0.0)
-            if st.button("💾 Guardar Ingreso", type="primary", use_container_width=True):
-                nuevo_ingreso = pd.DataFrame([{
-                    "Fecha": fecha_ingreso.strftime("%Y-%m-%d"),
-                    "Mes": "Agosto",
-                    "Fuente": fuente,
-                    "Detalle": "Ingreso manual",
-                    "Monto ($)": monto_ingreso
-                }])
-                st.session_state.ingresos = pd.concat([st.session_state.ingresos, nuevo_ingreso], ignore_index=True)
-                guardar_estado()
-                st.success("¡Ingreso registrado con éxito!")
+                    if share and nt!="Ingreso":pesos*=.5
+                    upd("movimientos",rid,{"fecha":nd.strftime("%Y-%m-%d"),"tipo":nt,"descripcion":ndesc.strip(),"monto":mval,"categoria":nc,"comparte_tomas":bool(share),"medio_pago":npay,"cuotas":int(nq),"mes_imputacion":nm[:7],"moneda":ncur,"cotizacion_mep":mep,"monto_pesos":pesos})
+            if st.button("🗑️ Borrar movimiento",key=f"del{rid}",use_container_width=True):
+                dele("movimientos",rid)
 
-# --- 7. PÁGINA: FIJOS Y AUTOMATIZACIÓN ---
-elif pagina == "🔄 Fijos y Automatización":
-    st.title("Gastos Fijos del Mes")
-    st.write("Estos gastos se precargan el día 1. Confirmá el monto real para que impacten en tu flujo.")
-    
-    fijos = [
-        {"nombre": "Expensas", "estimado": 120000, "estado": "Pendiente"},
-        {"nombre": "EPEC", "estimado": 31622, "estado": "Pendiente"},
-        {"nombre": "Gimnasio / CrossFit", "estimado": 35000, "estado": "Confirmado"},
-        {"nombre": "Prepaga", "estimado": 218514, "estado": "Pendiente"}
-    ]
-    
-    for f in fijos:
+def page_fixed():
+    st.title("🔄 Fijos y Automatización")
+    df=table("gastos_fijos")
+    if df.empty:st.info("No hay gastos fijos.");return
+    for _,r in df.iterrows():
+        rid=int(r.id)
         with st.container(border=True):
-            col_izq, col_der = st.columns([3, 1])
-            with col_izq:
-                st.markdown(f"**{f['nombre']}**")
-                monto_real = st.number_input(f"Monto Final", value=f['estimado'], key=f['nombre'])
-            with col_der:
-                st.write("")
-                st.write("")
-                if f['estado'] == "Pendiente":
-                    st.button("🟡 Confirmar Pago", key=f"btn_{f['nombre']}", use_container_width=True)
-                else:
-                    st.button("🟢 Pagado", disabled=True, key=f"btn_{f['nombre']}", use_container_width=True)
+            a,b,c=st.columns([2,1,1])
+            a.markdown(f"**{r.nombre}**")
+            b.write(money(r.monto))
+            if c.button("↩️ Desconfirmar" if r.confirmado_mes else "✅ Confirmar",key=f"fix{rid}"):
+                upd("gastos_fijos",rid,{"confirmado_mes":not bool(r.confirmado_mes)})
+            st.caption("🟢 Activo" if r.activo else "⚪ Inactivo")
 
-# --- 8. PÁGINA: ESTADO DE TARJETAS ---
-elif pagina == "💳 Estado de Tarjetas":
-    st.title("Límites y Consumos de Tarjetas")
-    st.info("Monitoreo dinámico de tus plásticos cargados.")
-    
-    for t in st.session_state.tarjetas:
-        st.subheader(t["nombre"])
-        col_lim1, col_lim2 = st.columns(2)
-        with col_lim1:
-            st.write(f"Límite Configurado: {formato_arg(t['limite'])}")
-            
-            if not st.session_state.gastos.empty and 'Medio de Pago' in st.session_state.gastos.columns:
-                gasto_tc = st.session_state.gastos[st.session_state.gastos['Medio de Pago'] == t["nombre"]]['Monto ($)'].sum()
-            else:
-                gasto_tc = 0
-                
-            porcentaje = min(gasto_tc / t["limite"], 1.0) if t["limite"] > 0 else 0
-            st.progress(porcentaje)
-            st.caption(f"Consumido: {formato_arg(gasto_tc)} / Disponible: {formato_arg(t['limite'] - gasto_tc)}")
-        with col_lim2:
-            st.metric("Total Proyectado en Resumen", formato_arg(gasto_tc))
-        st.markdown("---")
+def page_cards():
+    st.title("💳 Estado de Tarjetas")
+    c=table("tarjetas"); m=movements()
+    if c.empty:st.info("Agregá tarjetas desde Configuración.");return
+    for _,r in c[c.activo==True].iterrows():
+        limit=float(r.limite or 0)
+        spent=m[(m.medio_pago==r.nombre)&(m.tipo!="Ingreso")].monto_pesos.sum() if not m.empty else 0
+        pct=spent/limit if limit else 0
+        with st.container(border=True):
+            st.markdown(f"### 💳 {r.nombre}")
+            a,b,d=st.columns(3);a.metric("Límite",money(limit));b.metric("Consumido",money(spent));d.metric("Disponible",money(max(limit-spent,0)))
+            st.progress(min(pct,1));st.caption(f"{pct*100:.1f}% utilizado")
 
-# --- 9. PÁGINA: CONFIGURAR TARJETAS ---
-elif pagina == "⚙️ Configurar Tarjetas":
-    st.title("Administración de Tarjetas de Crédito")
-    st.write("Agregá nuevas tarjetas, modificá sus nombres o actualiza sus límites de compra.")
-    
-    with st.form("form_nueva_tarjeta"):
-        st.subheader("Agregar Nueva Tarjeta")
-    
-        nuevo_nombre = st.text_input("Nombre de la Tarjeta (Ej. Mastercard Galicia, Visa Macro Roby)")
-        nuevo_limite = st.number_input("Límite de Compra ($)", min_value=0.0, value=1000000.0)
-        
-        btn_agregar = st.form_submit_button("➕ Agregar Tarjeta", type="primary")
-        if btn_agregar:
-            if nuevo_nombre:
-                st.session_state.tarjetas.append({"nombre": nuevo_nombre, "limite": nuevo_limite, "tipo": "Crédito"})
-                guardar_estado()
-                st.success(f"¡Tarjeta '{nuevo_nombre}' agregada con éxito!")
-                st.rerun()
-            else:
-                st.error("Por favor ingresá un nombre para la tarjeta.")
-                
-    st.markdown("---")
-    st.subheader("Tarjetas Registradas Actualmente")
-    for i, t in enumerate(st.session_state.tarjetas):
-        col_t1, col_t2, col_t3 = st.columns([2, 2, 1])
-        with col_t1:
-            st.text(f"💳 {t['nombre']}")
-        with col_t2:
-            st.text(f"Límite: {formato_arg(t['limite'])}")
-        with col_t3:
-            if st.button("🗑️ Eliminar", key=f"del_card_{i}"):
-                st.session_state.tarjetas.pop(i)
-                guardar_estado()
-                st.rerun()
+def page_config():
+    st.title("⚙️ Configuración")
+    t1,t2,t3,t4=st.tabs(["💳 Tarjetas","🏷️ Categorías","🏠 Gastos Fijos","💵 Medios de Pago"])
+    with t1:
+        df=table("tarjetas")
+        for _,r in df.iterrows():
+            rid=int(r.id)
+            with st.form(f"card{rid}"):
+                a,b,c=st.columns(3);n=a.text_input("Nombre",r.nombre);lim=b.number_input("Límite",0.0,value=float(r.limite or 0));act=c.toggle("Activa",bool(r.activo))
+                if st.form_submit_button("Guardar"):upd("tarjetas",rid,{"nombre":n.strip(),"limite":lim,"activo":act})
+        with st.form("newcard"):
+            n=st.text_input("Nueva tarjeta");lim=st.number_input("Nuevo límite",0.0)
+            if st.form_submit_button("➕ Agregar") and n.strip():ins("tarjetas",{"nombre":n.strip(),"limite":lim,"activo":True})
+    with t2:
+        df=table("categorias")
+        for _,r in df.iterrows():
+            rid=int(r.id)
+            with st.form(f"cat{rid}"):
+                a,b=st.columns([3,1]);n=a.text_input("Nombre",r.nombre);act=b.toggle("Activa",bool(r.activo))
+                if st.form_submit_button("Guardar"):upd("categorias",rid,{"nombre":n.strip(),"activo":act})
+        with st.form("newcat"):
+            n=st.text_input("Nueva categoría")
+            if st.form_submit_button("➕ Agregar") and n.strip():ins("categorias",{"nombre":n.strip(),"activo":True})
+    with t3:
+        df=table("gastos_fijos")
+        for _,r in df.iterrows():
+            rid=int(r.id)
+            with st.form(f"fixcfg{rid}"):
+                a,b,c=st.columns(3);n=a.text_input("Nombre",r.nombre);amt=b.number_input("Monto",0.0,value=float(r.monto or 0));day=c.number_input("Vencimiento",1,31,int(r.dia_vencimiento or 10));act=st.toggle("Activo",bool(r.activo))
+                if st.form_submit_button("Guardar"):upd("gastos_fijos",rid,{"nombre":n.strip(),"monto":amt,"dia_vencimiento":day,"activo":act})
+        with st.form("newfix"):
+            a,b,c=st.columns(3);n=a.text_input("Nuevo gasto fijo");amt=b.number_input("Monto",0.0);day=c.number_input("Día",1,31,10)
+            if st.form_submit_button("➕ Agregar") and n.strip():ins("gastos_fijos",{"nombre":n.strip(),"monto":amt,"dia_vencimiento":day,"activo":True,"confirmado_mes":False})
+    with t4:
+        df=table("medios_pago")
+        for _,r in df.iterrows():
+            rid=int(r.id)
+            with st.form(f"pay{rid}"):
+                a,b=st.columns([3,1]);n=a.text_input("Nombre",r.nombre);act=b.toggle("Activo",bool(r.activo))
+                if st.form_submit_button("Guardar"):upd("medios_pago",rid,{"nombre":n.strip(),"activo":act})
+        with st.form("newpay"):
+            n=st.text_input("Nuevo medio")
+            if st.form_submit_button("➕ Agregar") and n.strip():ins("medios_pago",{"nombre":n.strip(),"activo":True})
+
+if st.session_state.page=="📊 Dashboard General":page_dash()
+elif st.session_state.page=="➕ Cargar Movimiento":page_load()
+elif st.session_state.page=="📅 Registro Diario":page_daily()
+elif st.session_state.page=="🔄 Fijos y Automatización":page_fixed()
+elif st.session_state.page=="💳 Estado de Tarjetas":page_cards()
+else:page_config()
