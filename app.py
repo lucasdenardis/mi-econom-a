@@ -275,44 +275,51 @@ elif pagina == "📅 Registro Diario":
     st.write("Visualizá, filtrá por mes, y **editá** cualquier celda si te equivocaste (luego presioná Guardar).")
     
     if not df_movimientos.empty:
-        # 1. Convertir los datos de Supabase a formatos que Streamlit entienda
         df_mostrar = df_movimientos[['id', 'fecha', 'mes_imputacion', 'tipo', 'categoria', 'descripcion', 'monto', 'medio_pago', 'cuotas']].copy()
         
-        # --- FIX DE TIPOS DE DATOS ---
-        # Convertimos la fecha de texto a formato Fecha real
+        # --- CORRECCIÓN DE FORMATOS ---
         df_mostrar['fecha'] = pd.to_datetime(df_mostrar['fecha']).dt.date
-        # Aseguramos que monto y cuotas sean números reales
         df_mostrar['monto'] = pd.to_numeric(df_mostrar['monto'], errors='coerce').fillna(0.0)
         df_mostrar['cuotas'] = pd.to_numeric(df_mostrar['cuotas'], errors='coerce').fillna(1).astype(int)
         
-        # 2. Filtro de Mes
-        meses_historicos = df_mostrar['mes_imputacion'].dropna().unique().tolist()
-        opciones_filtro = ["Ver Todos"] + meses_historicos
+        # Si hay meses viejos en letras o vacíos, los normalizamos automáticamente al formato AAAA-MM basado en la fecha
+        def limpiar_mes(row):
+            mes_actual_val = str(row['mes_imputacion'])
+            if "-" not in mes_actual_val or len(mes_actual_val) != 7:
+                try:
+                    return pd.to_datetime(row['fecha']).strftime("%Y-%m")
+                except:
+                    return "2026-08"
+            return mes_actual_val
+
+        df_mostrar['mes_imputacion'] = df_mostrar.apply(limpiar_mes, axis=1)
         
-        meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-        mes_actual = meses[datetime.date.today().month - 1]
+        # Lista de opciones limpias y ordenadas en formato AAAA-MM
+        meses_unicos_ordenados = sorted(df_mostrar['mes_imputacion'].dropna().unique().tolist())
+        opciones_filtro = ["Ver Todos"] + meses_unicos_ordenados
         
-        indice_defecto = opciones_filtro.index(mes_actual) if mes_actual in opciones_filtro else (len(opciones_filtro) - 1 if len(opciones_filtro) > 1 else 0)
+        mes_actual_str = datetime.date.today().strftime("%Y-%m")
+        indice_defecto = opciones_filtro.index(mes_actual_str) if mes_actual_str in opciones_filtro else (len(opciones_filtro) - 1 if len(opciones_filtro) > 1 else 0)
+        
         mes_filtro = st.selectbox("Filtrar por Mes", options=opciones_filtro, index=indice_defecto)
         
         st.markdown("---")
         
-        # 3. Aplicar Filtro
         if mes_filtro != "Ver Todos":
             df_mostrar = df_mostrar[df_mostrar['mes_imputacion'] == mes_filtro]
             
         df_mostrar = df_mostrar.sort_values(by='fecha', ascending=False).reset_index(drop=True)
         
-        # 4. Editor de Datos (Excel-like)
+        # Editor de Datos con opciones estrictas en formato AAAA-MM
         edited_df = st.data_editor(
             df_mostrar,
             use_container_width=True,
             hide_index=True,
-            disabled=["id"], # Bloqueamos el ID para que no se rompa la base de datos
+            disabled=["id"],
             column_config={
-                "id": None,  # Oculta la columna ID de la vista
+                "id": None,
                 "fecha": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY"),
-                "mes_imputacion": st.column_config.SelectboxColumn("Mes", options=meses),
+                "mes_imputacion": st.column_config.SelectboxColumn("Mes (AAAA-MM)", options=meses_unicos_ordenados),
                 "tipo": st.column_config.SelectboxColumn("Tipo", options=["Variable", "Fijo", "Ingreso"]),
                 "categoria": st.column_config.TextColumn("Categoría"),
                 "descripcion": st.column_config.TextColumn("Descripción"),
@@ -322,18 +329,16 @@ elif pagina == "📅 Registro Diario":
             }
         )
         
-        # 5. Botón para actualizar Supabase
         if st.button("💾 Guardar Cambios Editados", type="primary"):
             cambios = 0
             for index in edited_df.index:
                 fila_edit = edited_df.loc[index]
                 fila_orig = df_mostrar.loc[index]
                 
-                # Comparamos si el usuario modificó esta fila en particular
                 if not fila_edit.equals(fila_orig):
                     datos_update = {
                         "fecha": str(fila_edit['fecha']),
-                        "mes_imputacion": fila_edit['mes_imputacion'],
+                        "mes_imputacion": str(fila_edit['mes_imputacion']),
                         "tipo": fila_edit['tipo'],
                         "categoria": fila_edit['categoria'],
                         "descripcion": fila_edit['descripcion'],
