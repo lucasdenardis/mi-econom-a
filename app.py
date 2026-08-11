@@ -38,11 +38,28 @@ except Exception as e:
     st.error("Error de conexión a Supabase. Revisá los Secrets.")
     st.stop()
 
-# --- 3. FUNCIONES DE LECTURA Y ESCRITURA ---
+# --- 3. FUNCIONES DE LECTURA Y NORMALIZACIÓN ---
 def cargar_datos():
     res_mov = supabase.table("movimientos").select("*").execute()
     df_mov = pd.DataFrame(res_mov.data)
     
+    if not df_mov.empty:
+        # Normalizamos los montos y fechas de entrada
+        df_mov['monto'] = pd.to_numeric(df_mov['monto'], errors='coerce').fillna(0.0)
+        df_mov['fecha_dt'] = pd.to_datetime(df_mov['fecha'], errors='coerce')
+        
+        # Limpieza global de meses: si está en letras (ej. "Julio") o vacío, lo pasamos a AAAA-MM usando su fecha
+        def normalizar_mes(row):
+            m = str(row['mes_imputacion'])
+            if "-" not in m or len(m) != 7:
+                try:
+                    return row['fecha_dt'].strftime("%Y-%m")
+                except:
+                    return "2026-08"
+            return m
+
+        df_mov['mes_imputacion'] = df_mov.apply(normalizar_mes, axis=1)
+
     res_tarjetas = supabase.table("tarjetas").select("*").eq("activo", True).execute()
     lista_tarjetas = res_tarjetas.data if res_tarjetas.data else []
     
@@ -66,7 +83,7 @@ with st.sidebar:
         "📅 Registro Diario",
         "🔄 Fijos y Automatización", 
         "⚙️ Configurar Tarjetas"
-    ], index=1)
+    ], index=0)
     st.markdown("---")
 
 # --- 5. PÁGINAS ---
@@ -75,20 +92,28 @@ if pagina == "📊 Dashboard General":
     st.title("Panel de Control Financiero")
     
     if not df_movimientos.empty:
-        df_movimientos['monto'] = pd.to_numeric(df_movimientos['monto'], errors='coerce').fillna(0)
-        meses_disponibles = df_movimientos['mes_imputacion'].dropna().unique().tolist()
+        meses_disponibles = sorted(df_movimientos['mes_imputacion'].dropna().unique().tolist())
         
-        mes_seleccionado = st.selectbox("Seleccionar Mes de Análisis", options=meses_disponibles, index=len(meses_disponibles)-1)
+        mes_actual_str = datetime.date.today().strftime("%Y-%m")
+        indice_defecto = meses_disponibles.index(mes_actual_str) if mes_actual_str in meses_disponibles else (len(meses_disponibles) - 1 if len(meses_disponibles) > 0 else 0)
+        
+        mes_seleccionado = st.selectbox("Seleccionar Mes de Análisis", options=meses_disponibles, index=indice_defecto)
         st.markdown("---")
         
         df_mes = df_movimientos[df_movimientos['mes_imputacion'] == mes_seleccionado]
         
-        ingresos_mes = df_mes[df_mes['tipo'] == 'Ingreso']['monto'].sum()
-        fijos_mes = df_mes[df_mes['tipo'] == 'Fijo']['monto'].sum()
-        variables_mes = df_mes[df_mes['tipo'] == 'Variable']['monto'].sum()
+        # Cálculo robusto identificando por tipo (Ingreso vs Gastos)
+        ingresos_mes = df_mes[df_mes['tipo'].str.lower() == 'ingreso']['monto'].sum()
+        
+        # Todo lo que no sea ingreso cuenta como gasto (Fijo, Variable, etc.)
+        df_gastos_mes = df_mes[df_mes['tipo'].str.lower() != 'ingreso']
+        fijos_mes = df_gastos_mes[df_gastos_mes['tipo'].str.lower() == 'fijo']['monto'].sum()
+        variables_mes = df_gastos_mes[df_gastos_mes['tipo'].str.lower() != 'fijo']['monto'].sum()
+        
         gastos_totales_mes = fijos_mes + variables_mes
         ahorro_real = ingresos_mes - gastos_totales_mes
         
+        # KPIs Superiores
         col1, col2, col3 = st.columns(3)
         col1.metric("Ingresos Totales", formato_arg(ingresos_mes))
         col2.metric("Gastos Totales", formato_arg(gastos_totales_mes), delta=formato_arg(-gastos_totales_mes), delta_color="inverse")
@@ -133,12 +158,13 @@ if pagina == "📊 Dashboard General":
 
         st.markdown("---")
         
+        # TABLA 2: Comparativa Mes a Mes
         st.markdown("### 🗓️ Comparativa Histórica Mes a Mes")
         historico = []
         for m in meses_disponibles:
             df_m = df_movimientos[df_movimientos['mes_imputacion'] == m]
-            ing = df_m[df_m['tipo'] == 'Ingreso']['monto'].sum()
-            gst = df_m[df_m['tipo'] != 'Ingreso']['monto'].sum()
+            ing = df_m[df_m['tipo'].str.lower() == 'ingreso']['monto'].sum()
+            gst = df_m[df_m['tipo'].str.lower() != 'ingreso']['monto'].sum()
             ahorro = ing - gst
             porcentaje = (ahorro / ing * 100) if ing > 0 else 0
             
@@ -158,12 +184,13 @@ if pagina == "📊 Dashboard General":
 
         st.markdown("---")
         
+        # ESTADO DE TARJETAS EN EL DASHBOARD
         st.markdown("### 💳 Estado de Tarjetas (Consumos del Mes)")
         nombres_tarjetas = [t['nombre'] for t in tarjetas_activas]
         if nombres_tarjetas:
             resumen_tarjetas = []
             for t in tarjetas_activas:
-                consumo = df_mes[(df_mes['medio_pago'] == t['nombre'])]['monto'].sum()
+                consumo = df_mes[df_mes['medio_pago'] == t['nombre']]['monto'].sum()
                 limite = t['limite']
                 disponible = limite - consumo
                 estado = "Crítico" if consumo > limite * 0.8 else "Normal"
@@ -215,12 +242,12 @@ elif pagina == "➕ Cargar Movimiento":
                         medio_pago_final = st.selectbox("Seleccionar Tarjeta", nombres_tarjetas)
                     
                     cuotas = st.number_input("Cuotas", min_value=1, max_value=24, value=1)
-                    mes_imputacion = st.selectbox("Mes de Imputación", ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"], index=7)
+                    meses_opciones = sorted(df_movimientos['mes_imputacion'].dropna().unique().tolist()) if not df_movimientos.empty else [datetime.date.today().strftime("%Y-%m")]
+                    mes_imputacion = st.selectbox("Mes de Imputación", options=meses_opciones, index=len(meses_opciones)-1)
                 else:
                     medio_pago_final = "Débito / Efectivo / MP"
                     cuotas = 1
-                    meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-                    mes_imputacion = meses[fecha.month - 1]
+                    mes_imputacion = fecha.strftime("%Y-%m")
                 
             if st.button("💾 Guardar Gasto", type="primary", use_container_width=True):
                 if monto is None or monto <= 0:
@@ -248,8 +275,7 @@ elif pagina == "➕ Cargar Movimiento":
             fuente = st.selectbox("Fuente", ["Residencia (Epidemiología)", "Laboratorio", "Otros ingresos"])
             monto_ingreso = st.number_input("Monto ($)", min_value=0.0, format="%.2f", value=None, placeholder="Ej. 500000")
             
-            meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-            mes_imp_ing = st.selectbox("Mes Imputación", meses, index=fecha_ing.month - 1)
+            mes_imp_ing = fecha_ing.strftime("%Y-%m")
             
             if st.button("💾 Guardar Ingreso", type="primary", use_container_width=True):
                 if monto_ingreso is None or monto_ingreso <= 0:
@@ -277,24 +303,10 @@ elif pagina == "📅 Registro Diario":
     if not df_movimientos.empty:
         df_mostrar = df_movimientos[['id', 'fecha', 'mes_imputacion', 'tipo', 'categoria', 'descripcion', 'monto', 'medio_pago', 'cuotas']].copy()
         
-        # --- CORRECCIÓN DE FORMATOS ---
         df_mostrar['fecha'] = pd.to_datetime(df_mostrar['fecha']).dt.date
         df_mostrar['monto'] = pd.to_numeric(df_mostrar['monto'], errors='coerce').fillna(0.0)
         df_mostrar['cuotas'] = pd.to_numeric(df_mostrar['cuotas'], errors='coerce').fillna(1).astype(int)
         
-        # Si hay meses viejos en letras o vacíos, los normalizamos automáticamente al formato AAAA-MM basado en la fecha
-        def limpiar_mes(row):
-            mes_actual_val = str(row['mes_imputacion'])
-            if "-" not in mes_actual_val or len(mes_actual_val) != 7:
-                try:
-                    return pd.to_datetime(row['fecha']).strftime("%Y-%m")
-                except:
-                    return "2026-08"
-            return mes_actual_val
-
-        df_mostrar['mes_imputacion'] = df_mostrar.apply(limpiar_mes, axis=1)
-        
-        # Lista de opciones limpias y ordenadas en formato AAAA-MM
         meses_unicos_ordenados = sorted(df_mostrar['mes_imputacion'].dropna().unique().tolist())
         opciones_filtro = ["Ver Todos"] + meses_unicos_ordenados
         
@@ -310,7 +322,8 @@ elif pagina == "📅 Registro Diario":
             
         df_mostrar = df_mostrar.sort_values(by='fecha', ascending=False).reset_index(drop=True)
         
-        # Editor de Datos con opciones estrictas en formato AAAA-MM
+        meses_lista_editor = sorted(df_movimientos['mes_imputacion'].dropna().unique().tolist())
+        
         edited_df = st.data_editor(
             df_mostrar,
             use_container_width=True,
@@ -319,7 +332,7 @@ elif pagina == "📅 Registro Diario":
             column_config={
                 "id": None,
                 "fecha": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY"),
-                "mes_imputacion": st.column_config.SelectboxColumn("Mes (AAAA-MM)", options=meses_unicos_ordenados),
+                "mes_imputacion": st.column_config.SelectboxColumn("Mes (AAAA-MM)", options=meses_lista_editor),
                 "tipo": st.column_config.SelectboxColumn("Tipo", options=["Variable", "Fijo", "Ingreso"]),
                 "categoria": st.column_config.TextColumn("Categoría"),
                 "descripcion": st.column_config.TextColumn("Descripción"),
@@ -370,9 +383,8 @@ elif pagina == "🔄 Fijos y Automatización":
         {"nombre": "Seguro Auto", "cat": "Transporte / Auto", "estimado": 45000}
     ]
     
-    meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-    mes_actual = meses[datetime.date.today().month - 1]
-    mes_fijo = st.selectbox("¿A qué mes imputar los pagos?", meses, index=datetime.date.today().month - 1)
+    meses_opciones = sorted(df_movimientos['mes_imputacion'].dropna().unique().tolist()) if not df_movimientos.empty else [datetime.date.today().strftime("%Y-%m")]
+    mes_fijo = st.selectbox("¿A qué mes imputar los pagos?", options=meses_opciones, index=len(meses_opciones)-1)
     
     st.markdown("---")
     
